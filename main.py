@@ -7,10 +7,16 @@ import os
 
 # --- SERVEUR WEB KEEP-ALIVE ---
 app = Flask('')
+
 @app.route('/')
-def home(): return "Bot de classement actif !"
-def run_web_server(): app.run(host='0.0.0.0', port=10000)
-def keep_alive(): Thread(target=run_web_server).start()
+def home():
+    return "Bot de classement actif !"
+
+def run_web_server():
+    app.run(host='0.0.0.0', port=10000)
+
+def keep_alive():
+    Thread(target=run_web_server).start()
 
 # --- CONFIGURATION BOT ---
 intents = discord.Intents.default()
@@ -24,7 +30,6 @@ id_message_principal = None
 id_salon_principal = None
 
 def obtenir_nom_salon_team(num_team):
-    """Associe un style unique et des emojis personnalisés selon le numéro de la team."""
     noms_speciaux = {
         1: "🥇︱𝐓𝐄𝐀𝐌-𝟏🥇",
         2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
@@ -35,11 +40,11 @@ def obtenir_nom_salon_team(num_team):
         7: "✨️｜𝐓𝐄𝐀𝐌-𝟕✨️",
         8: "🎫｜𝐓𝐄𝐀𝐌-𝟖🎫"
     }
-    # Si le numéro dépasse 8, on génère un nom stylisé par défaut pour éviter les bugs
     return noms_speciaux.get(num_team, f"💫︱𝐓𝐄𝐀𝐌-{num_team}💫")
 
 def obtenir_equipe_et_salon(position):
-    if position <= 5: return 1
+    if position <= 5: 
+        return 1
     return 2 + (position - 6) // 6
 
 async def rafraichir_partout(guild):
@@ -49,7 +54,13 @@ async def rafraichir_partout(guild):
     total_joueurs = len(classement_top)
     max_team = obtenir_equipe_et_salon(total_joueurs) if total_joueurs > 0 else 1
 
-    # 1. Création des rôles et des salons stylisés manquants
+    # 1. Nettoyage des rôles sur les membres hors classement
+    for member in guild.members:
+        if member.id not in classement_top:
+            roles_mauvais = [r for r in member.roles if r.name.startswith("Team ")]
+            if roles_mauvais: await member.remove_roles(*roles_mauvais)
+
+    # 2. Création automatique des rôles et salons manquants
     for num_team in range(1, max_team + 1):
         nom_role = f"Team {num_team}"
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
@@ -57,10 +68,11 @@ async def rafraichir_partout(guild):
         if not discord.utils.get(guild.roles, name=nom_role):
             await guild.create_role(name=nom_role)
             
-        if not discord.utils.get(guild.channels, name=nom_salon_stylise):
+        salon_existe = any(c.name.lower() == nom_salon_stylise.lower() for c in guild.channels)
+        if not salon_existe:
             await guild.create_text_channel(name=nom_salon_stylise)
 
-    # 2. Mise à jour des rôles des membres
+    # 3. Mise à jour dynamique des rôles pour les joueurs du top
     for index, user_id in enumerate(classement_top):
         pos = index + 1
         team_cible = obtenir_equipe_et_salon(pos)
@@ -71,7 +83,7 @@ async def rafraichir_partout(guild):
             if roles_mauvais: await member.remove_roles(*roles_mauvais)
             if role_bon and role_bon not in member.roles: await member.add_roles(role_bon)
 
-    # 3. Mise à jour du message du TOP Principal
+    # 4. Actualisation du message de Classement Général complet
     salon_top = guild.get_channel(id_salon_principal)
     if salon_top:
         texte_top = "🏆 **CLASSEMENT GÉNÉRAL COMPLET** 🏆\n\n"
@@ -92,10 +104,10 @@ async def rafraichir_partout(guild):
             msg = await salon_top.send(content=texte_top, view=view)
             id_message_principal = msg.id
 
-    # 4. Mise à jour des salons d'équipes individuels avec leurs nouveaux noms
+    # 5. Nettoyage et affichage actualisé dans les salons de Teams respectifs
     for num_team in range(1, max_team + 1):
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
-        salon_team = discord.utils.get(guild.channels, name=nom_salon_stylise)
+        salon_team = discord.utils.find(lambda c: c.name.lower() == nom_salon_stylise.lower(), guild.channels)
         
         if salon_team:
             try: await salon_team.purge(limit=50)
@@ -104,9 +116,9 @@ async def rafraichir_partout(guild):
             if lignes:
                 await salon_team.send(f"🏆 **Membres - Team {num_team}** 🏆\n\n" + "\n".join(lignes))
             else:
-                await salon_team.send(f"Aucun joueur dans la Team {num_team}.")
+                await salon_team.send(f"Aucun joueur assigné à la Team {num_team} actuellement.")
 
-# --- FENÊTRES MODALES INTERACTIVES ---
+# --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
 
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
@@ -122,7 +134,7 @@ class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
                 return
             joueur_id = classement_top.pop(p_dep)
             classement_top.insert(p_arr, joueur_id)
-            await interaction.response.send_message("📈 Déplacement effectué ! Mise à jour...", ephemeral=True)
+            await interaction.response.send_message("📈 Déplacement effectué !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
@@ -140,12 +152,28 @@ class FenetreEchange(discord.ui.Modal, title="Échanger 2 places (Permuter)"):
                 await interaction.response.send_message("❌ Positions invalides.", ephemeral=True)
                 return
             classement_top[p1], classement_top[p2] = classement_top[p2], classement_top[p1]
-            await interaction.response.send_message("🔄 Échange effectué ! Mise à jour...", ephemeral=True)
+            await interaction.response.send_message("🔄 Échange effectué !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
 
-# --- ZONE DES BOUTONS ---
+class FenetreSuppression(discord.ui.Modal, title="Retirer un joueur du Top"):
+    pos_suppr = discord.ui.TextInput(label="Position du joueur à supprimer", placeholder="Ex: 3")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global classement_top
+        try:
+            p = int(self.pos_suppr.value) - 1
+            if p < 0 or p >= len(classement_top):
+                await interaction.response.send_message("❌ Position invalide.", ephemeral=True)
+                return
+            classement_top.pop(p)
+            await interaction.response.send_message("❌ Joueur retiré avec succès !", ephemeral=True)
+            await rafraichir_partout(interaction.guild)
+        except ValueError:
+            await interaction.response.send_message("❌ Veuillez entrer un nombre valide.", ephemeral=True)
+
+# --- BLOC DE CONTROLE (BOUTONS) ---
 class VueControleTop(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -164,7 +192,14 @@ class VueControleTop(discord.ui.View):
             return
         await interaction.response.send_modal(FenetreEchange())
 
-# --- COMMANDES DE BASE ---
+    @discord.ui.button(label="Retirer du Top ❌", style=discord.ButtonStyle.danger, custom_id="btn_suppr")
+    async def bouton_supprime(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Tu dois être admin.", ephemeral=True)
+            return
+        await interaction.response.send_modal(FenetreSuppression())
+
+# --- COMMANDES ADMIN DE BASE ---
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
 async def initialiser_salon_top(ctx):
@@ -184,8 +219,9 @@ async def ajouter_joueur(ctx, membre: discord.Member):
     await ctx.message.delete()
     await rafraichir_partout(ctx.guild)
 
-@bot.event
-async def on_ready(): print(f"Bot en ligne : {bot.user.name}")
-
-keep_alive()
-bot.run(os.environ.get("DISCORD_TOKEN"))
+@bot.command(name="remove")
+@commands.has_permissions(administrator=True)
+async def supprimer_joueur_txt(ctx, membre: discord.Member):
+    global classement_top
+    if membre.id in classement_top:
+classement_top.remove(membre.id)await ctx.send(f"❌ {membre.mention} retiré.", delete_after=3)await ctx.message.delete()await rafraichir_partout(ctx.guild)else:await ctx.send("Ce joueur n'est pas dans le top.", delete_after=3)@bot.eventasync def on_ready():print(f"Bot en ligne : {bot.user.name}")keep_alive()bot.run(os.environ.get("DISCORD_TOKEN"))
