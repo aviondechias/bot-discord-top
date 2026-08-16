@@ -3,7 +3,7 @@ from discord.ext import commands
 import asyncio
 from flask import Flask
 from threading import Thread
-
+import os
 # --- CONFIGURATION DU MINI-SERVEUR WEB POUR GARDER LE BOT REVEILLÉ ---
 app = Flask('')
 
@@ -110,5 +110,4 @@ async def on_ready():
 
 # Lancement du mini-site web puis du bot Discord
 keep_alive()
-import os
 bot.run(os.environ.get("DISCORD_TOKEN"))
