@@ -23,6 +23,21 @@ classement_top = []
 id_message_principal = None
 id_salon_principal = None
 
+def obtenir_nom_salon_team(num_team):
+    """Associe un style unique et des emojis personnalisés selon le numéro de la team."""
+    noms_speciaux = {
+        1: "🥇︱𝐓𝐄𝐀𝐌-𝟏🥇",
+        2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
+        3: "🥉︱𝐓𝐄𝐀𝐌-𝟑🥉",
+        4: "🎖︱𝐓𝐄𝐀𝐌-𝟒🎖",
+        5: "🏆︱𝐓𝐄𝐀𝐌-𝟓🏆",
+        6: "🎗︱𝐓𝐄𝐀𝐌-𝟔🎗",
+        7: "✨️｜𝐓𝐄𝐀𝐌-𝟕✨️",
+        8: "🎫｜𝐓𝐄𝐀𝐌-𝟖🎫"
+    }
+    # Si le numéro dépasse 8, on génère un nom stylisé par défaut pour éviter les bugs
+    return noms_speciaux.get(num_team, f"💫︱𝐓𝐄𝐀𝐌-{num_team}💫")
+
 def obtenir_equipe_et_salon(position):
     if position <= 5: return 1
     return 2 + (position - 6) // 6
@@ -34,12 +49,16 @@ async def rafraichir_partout(guild):
     total_joueurs = len(classement_top)
     max_team = obtenir_equipe_et_salon(total_joueurs) if total_joueurs > 0 else 1
 
-    # 1. Création des rôles / salons manquants
+    # 1. Création des rôles et des salons stylisés manquants
     for num_team in range(1, max_team + 1):
-        if not discord.utils.get(guild.roles, name=f"Team {num_team}"):
-            await guild.create_role(name=f"Team {num_team}")
-        if not discord.utils.get(guild.channels, name=f"team-{num_team}"):
-            await guild.create_text_channel(name=f"team-{num_team}")
+        nom_role = f"Team {num_team}"
+        nom_salon_stylise = obtenir_nom_salon_team(num_team)
+
+        if not discord.utils.get(guild.roles, name=nom_role):
+            await guild.create_role(name=nom_role)
+            
+        if not discord.utils.get(guild.channels, name=nom_salon_stylise):
+            await guild.create_text_channel(name=nom_salon_stylise)
 
     # 2. Mise à jour des rôles des membres
     for index, user_id in enumerate(classement_top):
@@ -73,9 +92,11 @@ async def rafraichir_partout(guild):
             msg = await salon_top.send(content=texte_top, view=view)
             id_message_principal = msg.id
 
-    # 4. Mise à jour des salons d'équipes individuels
+    # 4. Mise à jour des salons d'équipes individuels avec leurs nouveaux noms
     for num_team in range(1, max_team + 1):
-        salon_team = discord.utils.get(guild.channels, name=f"team-{num_team}")
+        nom_salon_stylise = obtenir_nom_salon_team(num_team)
+        salon_team = discord.utils.get(guild.channels, name=nom_salon_stylise)
+        
         if salon_team:
             try: await salon_team.purge(limit=50)
             except: pass
@@ -87,7 +108,6 @@ async def rafraichir_partout(guild):
 
 # --- FENÊTRES MODALES INTERACTIVES ---
 
-# 1. Fenêtre pour Décaler (Monter/Descendre)
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
     pos_arrivee = discord.ui.TextInput(label="Sa nouvelle position voulue", placeholder="Ex: 2")
@@ -107,7 +127,6 @@ class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
 
-# 2. Fenêtre pour Permuter (Échanger)
 class FenetreEchange(discord.ui.Modal, title="Échanger 2 places (Permuter)"):
     pos1 = discord.ui.TextInput(label="Position du 1er joueur", placeholder="Ex: 2")
     pos2 = discord.ui.TextInput(label="Position du 2ème joueur", placeholder="Ex: 5")
