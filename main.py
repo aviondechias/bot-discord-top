@@ -18,7 +18,7 @@ intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Liste globale en mémoire pour stocker les IDs des joueurs dans l'ordre du TOP
+# Stockage des données en mémoire
 classement_top = []
 id_message_principal = None
 id_salon_principal = None
@@ -85,8 +85,10 @@ async def rafraichir_partout(guild):
             else:
                 await salon_team.send(f"Aucun joueur dans la Team {num_team}.")
 
-# --- INTERFACES VISUELLES (BOUTONS & POP-UP) ---
-class FenetreDeplacement(discord.ui.Modal, title="Changer la place d'un joueur"):
+# --- FENÊTRES MODALES INTERACTIVES ---
+
+# 1. Fenêtre pour Décaler (Monter/Descendre)
+class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
     pos_arrivee = discord.ui.TextInput(label="Sa nouvelle position voulue", placeholder="Ex: 2")
 
@@ -95,37 +97,58 @@ class FenetreDeplacement(discord.ui.Modal, title="Changer la place d'un joueur")
         try:
             p_dep = int(self.pos_depart.value) - 1
             p_arr = int(self.pos_arrivee.value) - 1
-            
             if p_dep < 0 or p_arr < 0 or p_dep >= len(classement_top) or p_arr >= len(classement_top):
-                await interaction.response.send_message("❌ Positions invalides. Vérifiez le classement actuel.", ephemeral=True)
+                await interaction.response.send_message("❌ Positions invalides.", ephemeral=True)
                 return
-            
-            # Algorithme de déplacement avec décalage automatique :
-            # On retire le joueur de son ancienne position et on l'insère à la nouvelle
             joueur_id = classement_top.pop(p_dep)
             classement_top.insert(p_arr, joueur_id)
-            
-            await interaction.response.send_message("📈 Déplacement effectué et classement décalé ! Mise à jour...", ephemeral=True)
+            await interaction.response.send_message("📈 Déplacement effectué ! Mise à jour...", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
 
+# 2. Fenêtre pour Permuter (Échanger)
+class FenetreEchange(discord.ui.Modal, title="Échanger 2 places (Permuter)"):
+    pos1 = discord.ui.TextInput(label="Position du 1er joueur", placeholder="Ex: 2")
+    pos2 = discord.ui.TextInput(label="Position du 2ème joueur", placeholder="Ex: 5")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global classement_top
+        try:
+            p1 = int(self.pos1.value) - 1
+            p2 = int(self.pos2.value) - 1
+            if p1 < 0 or p2 < 0 or p1 >= len(classement_top) or p2 >= len(classement_top):
+                await interaction.response.send_message("❌ Positions invalides.", ephemeral=True)
+                return
+            classement_top[p1], classement_top[p2] = classement_top[p2], classement_top[p1]
+            await interaction.response.send_message("🔄 Échange effectué ! Mise à jour...", ephemeral=True)
+            await rafraichir_partout(interaction.guild)
+        except ValueError:
+            await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
+
+# --- ZONE DES BOUTONS ---
 class VueControleTop(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Changer de place 📈", style=discord.ButtonStyle.primary, custom_id="bouton_deplacer_top")
+    @discord.ui.button(label="Changer de place 📈", style=discord.ButtonStyle.primary, custom_id="btn_deplace")
     async def bouton_deplace(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Tu dois être administrateur.", ephemeral=True)
+            await interaction.response.send_message("❌ Tu dois être admin.", ephemeral=True)
             return
         await interaction.response.send_modal(FenetreDeplacement())
 
-# --- COMMANDES ADMIN ---
+    @discord.ui.button(label="Échanger 2 places 🔄", style=discord.ButtonStyle.secondary, custom_id="btn_echange")
+    async def bouton_echange(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Tu dois être admin.", ephemeral=True)
+            return
+        await interaction.response.send_modal(FenetreEchange())
+
+# --- COMMANDES DE BASE ---
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
 async def initialiser_salon_top(ctx):
-    """Crée le panneau du Top dans le salon actuel (Ex: !setup)"""
     global id_salon_principal, id_message_principal
     id_salon_principal = ctx.channel.id
     id_message_principal = None
@@ -135,16 +158,15 @@ async def initialiser_salon_top(ctx):
 @bot.command(name="add")
 @commands.has_permissions(administrator=True)
 async def ajouter_joueur(ctx, membre: discord.Member):
-    """Ajoute simplement un nouveau joueur à la fin du classement (Ex: !add @Alexis)"""
     global classement_top
     if membre.id not in classement_top:
         classement_top.append(membre.id)
-    await ctx.send(f"✅ {membre.mention} a été ajouté à la fin du classement.", delete_after=5)
+    await ctx.send(f"✅ {membre.mention} ajouté en fin de liste.", delete_after=3)
     await ctx.message.delete()
     await rafraichir_partout(ctx.guild)
 
 @bot.event
-async def on_ready(): print(f"Bot connecté : {bot.user.name}")
+async def on_ready(): print(f"Bot en ligne : {bot.user.name}")
 
 keep_alive()
 bot.run(os.environ.get("DISCORD_TOKEN"))
