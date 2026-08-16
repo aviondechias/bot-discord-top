@@ -117,7 +117,6 @@ async def rafraichir_partout(guild):
                 await salon_team.send(f"🏆 **Membres - Team {num_team}** 🏆\n\n" + "\n".join(lignes))
             else:
                 await salon_team.send(f"Aucun joueur assigné à la Team {num_team} actuellement.")
-
 # --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
 
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
@@ -224,4 +223,16 @@ async def ajouter_joueur(ctx, membre: discord.Member):
 async def supprimer_joueur_txt(ctx, membre: discord.Member):
     global classement_top
     if membre.id in classement_top:
-classement_top.remove(membre.id)await ctx.send(f"❌ {membre.mention} retiré.", delete_after=3)await ctx.message.delete()await rafraichir_partout(ctx.guild)else:await ctx.send("Ce joueur n'est pas dans le top.", delete_after=3)@bot.eventasync def on_ready():print(f"Bot en ligne : {bot.user.name}")keep_alive()bot.run(os.environ.get("DISCORD_TOKEN"))
+        classement_top.remove(membre.id)
+        await ctx.send(f"❌ {membre.mention} retiré.", delete_after=3)
+        await ctx.message.delete()
+        await rafraichir_partout(ctx.guild)
+    else:
+        await ctx.send("Ce joueur n'est pas dans le top.", delete_after=3)
+
+@bot.event
+async def on_ready():
+    print(f"Bot en ligne : {bot.user.name}")
+
+keep_alive()
+bot.run(os.environ.get("DISCORD_TOKEN"))
