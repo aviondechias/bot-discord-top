@@ -110,4 +110,5 @@ async def on_ready():
 
 # Lancement du mini-site web puis du bot Discord
 keep_alive()
-bot.run("MTUzODU1MTI5Nzk4NzMyMTk1OQ.GvIFmX.ShUCCHeKUGjUq_ucSndbDFnu_pajLY7r6FQj-E")
+import os
+bot.run(os.environ.get("DISCORD_TOKEN"))
