@@ -30,7 +30,6 @@ id_message_principal = None
 id_salon_principal = None
 
 def obtenir_nom_salon_team(num_team):
-    # Changement du nom de la Team 1 et nettoyage des émojis de la Team 7
     noms_speciaux = {
         1: "🏅𝐌𝐀𝐈𝐍-𝐑𝐎𝐒𝐓𝐄𝐑🏅",
         2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
@@ -69,7 +68,7 @@ async def rafraichir_partout(guild):
         if not discord.utils.get(guild.roles, name=nom_role):
             await guild.create_role(name=nom_role)
             
-        salon_existe = any(c.name.lower() == nom_salon_stylise.lower() for c in guild.channels)
+        salon_existe = any(nom_salon_stylise.lower() in c.name.lower() or (num_team == 1 and "roster" in c.name.lower()) or (f"team-{num_team}" in c.name.lower()) for c in guild.channels)
         if not salon_existe:
             await guild.create_text_channel(name=nom_salon_stylise)
 
@@ -105,10 +104,17 @@ async def rafraichir_partout(guild):
             msg = await salon_top.send(content=texte_top, view=view)
             id_message_principal = msg.id
 
-    # 5. Nettoyage et affichage actualisé dans les salons de Teams respectifs
+    # 5. Nettoyage et affichage actualisé dans les salons de Teams
     for num_team in range(1, max_team + 1):
-        nom_salon_stylise = obtenir_nom_salon_team(num_team)
-        salon_team = discord.utils.find(lambda c: c.name.lower() == nom_salon_stylise.lower(), guild.channels)
+        salon_team = None
+        for c in guild.channels:
+            if isinstance(c, discord.TextChannel):
+                if num_team == 1 and "roster" in c.name.lower():
+                    salon_team = c
+                    break
+                elif f"team-{num_team}" in c.name.lower() or f"team_{num_team}" in c.name.lower() or obtenir_nom_salon_team(num_team).lower() in c.name.lower():
+                    salon_team = c
+                    break
         
         if salon_team:
             try: await salon_team.purge(limit=50)
@@ -217,6 +223,26 @@ async def ajouter_joueur(ctx, membre: discord.Member):
     if membre.id not in classement_top:
         classement_top.append(membre.id)
     await ctx.send(f"✅ {membre.mention} ajouté en fin de liste.", delete_after=3)
+    await ctx.message.delete()
+    await rafraichir_partout(ctx.guild)
+
+# NOUVELLE COMMANDE : Ajout de masse en une seule ligne !
+@bot.command(name="addmany")
+@commands.has_permissions(administrator=True)
+async def ajouter_plusieurs_joueurs(ctx, membres: commands.Greedy[discord.Member]):
+    global classement_top
+    if not membres:
+        await ctx.send("❌ Tu dois mentionner au moins un joueur. Exemple: `!addmany @J1 @J2`", delete_after=5)
+        await ctx.message.delete()
+        return
+    
+    compteur = 0
+    for membre in membres:
+        if membre.id not in classement_top:
+            classement_top.append(membre.id)
+            compteur += 1
+            
+    await ctx.send(f"⚡ {compteur} joueurs ont été ajoutés d'un coup au classement !", delete_after=4)
     await ctx.message.delete()
     await rafraichir_partout(ctx.guild)
 
