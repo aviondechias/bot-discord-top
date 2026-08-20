@@ -1,15 +1,18 @@
+import os
+import json
+import asyncio
+from threading import Thread
+
 import discord
 from discord.ext import commands
 from flask import Flask
-from threading import Thread
-import os
 
 
-# =========================
+# ============================================================
 # SERVEUR WEB KEEP-ALIVE
-# =========================
+# ============================================================
 
-app = Flask("")
+app = Flask(__name__)
 
 
 @app.route("/")
@@ -18,39 +21,99 @@ def home():
 
 
 def run_web_server():
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 
 def keep_alive():
-    Thread(target=run_web_server, daemon=True).start()
+    thread = Thread(target=run_web_server, daemon=True)
+    thread.start()
 
 
-# =========================
-# CONFIGURATION DU BOT
-# =========================
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+PREFIX = "!"
+DATA_FILE = "classement.json"
+
 
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(
+    command_prefix=PREFIX,
+    intents=intents
+)
 
 
-# =========================
-# STOCKAGE DES DONNÉES
-# =========================
+# ============================================================
+# STOCKAGE
+# ============================================================
 
-classement_top = []
-id_message_principal = None
-id_salon_principal = None
+# Structure :
+#
+# {
+#     "guild_id": {
+#         "salon_top": 123456,
+#         "message_top": 123456,
+#         "classement": [111111, 222222]
+#     }
+# }
+
+donnees = {}
 
 
-# =========================
-# NOMS DES SALONS
-# =========================
+def charger_donnees():
+    global donnees
 
-def obtenir_nom_salon_team(num_team):
-    noms_speciaux = {
+    if not os.path.exists(DATA_FILE):
+        donnees = {}
+        return
+
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as fichier:
+            donnees = json.load(fichier)
+
+    except (json.JSONDecodeError, OSError):
+        print("⚠️ Impossible de charger classement.json.")
+        donnees = {}
+
+
+def sauvegarder_donnees():
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as fichier:
+            json.dump(
+                donnees,
+                fichier,
+                ensure_ascii=False,
+                indent=4
+            )
+
+    except OSError as erreur:
+        print(f"❌ Erreur sauvegarde : {erreur}")
+
+
+def obtenir_donnees_guild(guild_id):
+    guild_id = str(guild_id)
+
+    if guild_id not in donnees:
+        donnees[guild_id] = {
+            "salon_top": None,
+            "message_top": None,
+            "classement": []
+        }
+
+    return donnees[guild_id]
+
+
+# ============================================================
+# NOMS DES TEAMS
+# ============================================================
+
+def obtenir_nom_salon_team(numero):
+    noms = {
         1: "𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑",
         2: "︱𝐓𝐄𝐀𝐌-𝟐",
         3: "︱𝐓𝐄𝐀𝐌-𝟑",
@@ -61,371 +124,595 @@ def obtenir_nom_salon_team(num_team):
         8: "︱𝐓𝐄𝐀𝐌-𝟖",
     }
 
-    return noms_speciaux.get(
-        num_team,
-        f"︱𝐓𝐄𝐀𝐌-{num_team}"
+    return noms.get(
+        numero,
+        f"︱𝐓𝐄𝐀𝐌-{numero}"
     )
 
 
-def obtenir_equipe_et_salon(position):
+def obtenir_equipe(position):
+    """
+    Position :
+    1-5  -> Team 1
+    6-11 -> Team 2
+    12-17 -> Team 3
+    etc.
+    """
+
     if position <= 5:
         return 1
 
     return 2 + (position - 6) // 6
 
 
-# =========================
-# RAFRAÎCHISSEMENT COMPLET
-# =========================
+def obtenir_nombre_teams(nombre_joueurs):
+    if nombre_joueurs <= 0:
+        return 1
 
-async def rafraichir_partout(guild):
-    global id_message_principal, id_salon_principal
+    return obtenir_equipe(nombre_joueurs)
 
-    if not id_salon_principal:
-        return
 
-    total_joueurs = len(classement_top)
+# ============================================================
+# OUTILS DISCORD
+# ============================================================
 
-    max_team = (
-        obtenir_equipe_et_salon(total_joueurs)
-        if total_joueurs > 0
-        else 1
+async def obtenir_ou_creer_role(guild, nom):
+    role = discord.utils.get(
+        guild.roles,
+        name=nom
     )
 
-    # -------------------------
-    # 1. Nettoyage des rôles
-    # -------------------------
+    if role:
+        return role
 
+    try:
+        return await guild.create_role(
+            name=nom,
+            reason="Gestion automatique du classement"
+        )
+
+    except discord.Forbidden:
+        print(
+            f"❌ Impossible de créer le rôle {nom} "
+            f"dans {guild.name}."
+        )
+
+    except discord.HTTPException as erreur:
+        print(
+            f"❌ Erreur création rôle {nom}: {erreur}"
+        )
+
+    return None
+
+
+async def obtenir_ou_creer_salon(guild, nom):
+    salon = discord.utils.find(
+        lambda channel:
+            channel.name.casefold() == nom.casefold(),
+        guild.text_channels
+    )
+
+    if salon:
+        return salon
+
+    try:
+        return await guild.create_text_channel(
+            name=nom,
+            reason="Gestion automatique du classement"
+        )
+
+    except discord.Forbidden:
+        print(
+            f"❌ Impossible de créer le salon {nom} "
+            f"dans {guild.name}."
+        )
+
+    except discord.HTTPException as erreur:
+        print(
+            f"❌ Erreur création salon {nom}: {erreur}"
+        )
+
+    return None
+
+
+# ============================================================
+# MISE À JOUR DES RÔLES
+# ============================================================
+
+async def mettre_a_jour_roles(guild, classement):
+    """
+    Retire les anciens rôles Team et donne
+    le bon rôle à chaque joueur.
+    """
+
+    roles_team = [
+        role
+        for role in guild.roles
+        if role.name.startswith("Team ")
+    ]
+
+    # Retirer les rôles Team aux membres qui ne sont plus
+    # dans le classement.
     for member in guild.members:
-        if member.id not in classement_top:
-            roles_mauvais = [
-                role
-                for role in member.roles
-                if role.name.startswith("Team ")
-            ]
 
-            if roles_mauvais:
-                try:
-                    await member.remove_roles(*roles_mauvais)
-                except discord.Forbidden:
-                    pass
+        if member.id in classement:
+            continue
 
-    # -------------------------
-    # 2. Création des rôles
-    #    et salons manquants
-    # -------------------------
+        mauvais_roles = [
+            role
+            for role in member.roles
+            if role in roles_team
+        ]
 
-    for num_team in range(1, max_team + 1):
-        nom_role = f"Team {num_team}"
-        nom_salon_stylise = obtenir_nom_salon_team(num_team)
+        if not mauvais_roles:
+            continue
 
-        role = discord.utils.get(
-            guild.roles,
-            name=nom_role
-        )
+        try:
+            await member.remove_roles(
+                *mauvais_roles,
+                reason="Joueur retiré du classement"
+            )
 
-        if role is None:
-            try:
-                await guild.create_role(name=nom_role)
-            except discord.Forbidden:
-                pass
+        except discord.Forbidden:
+            print(
+                f"⚠️ Impossible de modifier les rôles de "
+                f"{member}."
+            )
 
-        salon_existe = any(
-            channel.name.casefold() == nom_salon_stylise.casefold()
-            for channel in guild.channels
-        )
+    # Donner les bons rôles aux joueurs du classement.
+    for index, user_id in enumerate(classement):
 
-        if not salon_existe:
-            try:
-                await guild.create_text_channel(
-                    name=nom_salon_stylise
-                )
-            except discord.Forbidden:
-                pass
-
-    # -------------------------
-    # 3. Mise à jour des rôles
-    # -------------------------
-
-    for index, user_id in enumerate(classement_top):
         position = index + 1
-        team_cible = obtenir_equipe_et_salon(position)
+        numero_team = obtenir_equipe(position)
 
         member = guild.get_member(user_id)
 
         if member is None:
             continue
 
-        role_bon = discord.utils.get(
+        role_cible = discord.utils.get(
             guild.roles,
-            name=f"Team {team_cible}"
+            name=f"Team {numero_team}"
         )
 
-        roles_mauvais = [
-            role
-            for role in member.roles
-            if role.name.startswith("Team ")
-            and role != role_bon
-        ]
-
-        if roles_mauvais:
-            try:
-                await member.remove_roles(*roles_mauvais)
-            except discord.Forbidden:
-                pass
-
-        if role_bon and role_bon not in member.roles:
-            try:
-                await member.add_roles(role_bon)
-            except discord.Forbidden:
-                pass
-
-    # -------------------------
-    # 4. Mise à jour du classement général
-    # -------------------------
-
-    salon_top = guild.get_channel(id_salon_principal)
-
-    if salon_top:
-        texte_top = "🏆 **CLASSEMENT GÉNÉRAL COMPLET** 🏆\n\n"
-
-        if not classement_top:
-            texte_top += "Aucun joueur dans le top pour le moment."
-        else:
-            for index, user_id in enumerate(classement_top):
-                texte_top += f"**Top {index + 1} :** <@{user_id}>\n"
-
-        view = VueControleTop()
-
-        if id_message_principal:
-            try:
-                msg = await salon_top.fetch_message(
-                    id_message_principal
-                )
-
-                await msg.edit(
-                    content=texte_top,
-                    view=view
-                )
-
-            except discord.NotFound:
-                msg = await salon_top.send(
-                    content=texte_top,
-                    view=view
-                )
-
-                id_message_principal = msg.id
-
-        else:
-            msg = await salon_top.send(
-                content=texte_top,
-                view=view
+        if role_cible is None:
+            role_cible = await obtenir_ou_creer_role(
+                guild,
+                f"Team {numero_team}"
             )
 
-            id_message_principal = msg.id
-
-    # -------------------------
-    # 5. Mise à jour des salons Teams
-    # -------------------------
-
-    for num_team in range(1, max_team + 1):
-
-        nom_salon_stylise = obtenir_nom_salon_team(num_team)
-
-        salon_team = discord.utils.find(
-            lambda channel:
-                channel.name.casefold()
-                == nom_salon_stylise.casefold(),
-            guild.channels
-        )
-
-        if salon_team is None:
+        if role_cible is None:
             continue
 
-        try:
-            await salon_team.purge(limit=50)
-        except (discord.Forbidden, discord.HTTPException):
-            pass
-
-        lignes = [
-            f"**Top {i + 1} :** <@{uid}>"
-            for i, uid in enumerate(classement_top)
-            if obtenir_equipe_et_salon(i + 1) == num_team
+        mauvais_roles = [
+            role
+            for role in member.roles
+            if role in roles_team
+            and role != role_cible
         ]
 
-        if lignes:
-            texte_team = (
-                f"👥 **Membres - Team {num_team}**\n\n"
-                + "\n".join(lignes)
+        if mauvais_roles:
+            try:
+                await member.remove_roles(
+                    *mauvais_roles,
+                    reason="Changement de Team"
+                )
+
+            except discord.Forbidden:
+                pass
+
+        if role_cible not in member.roles:
+            try:
+                await member.add_roles(
+                    role_cible,
+                    reason="Classement automatique"
+                )
+
+            except discord.Forbidden:
+                pass
+
+
+# ============================================================
+# CRÉATION DES TEAMS
+# ============================================================
+
+async def preparer_teams(guild, nombre_teams):
+    for numero in range(1, nombre_teams + 1):
+
+        await obtenir_ou_creer_role(
+            guild,
+            f"Team {numero}"
+        )
+
+        await obtenir_ou_creer_salon(
+            guild,
+            obtenir_nom_salon_team(numero)
+        )
+
+
+# ============================================================
+# MISE À JOUR DU MESSAGE PRINCIPAL
+# ============================================================
+
+async def mettre_a_jour_message_top(guild, classement):
+    config = obtenir_donnees_guild(guild.id)
+
+    salon_id = config.get("salon_top")
+
+    if not salon_id:
+        return
+
+    salon = guild.get_channel(salon_id)
+
+    if salon is None:
+        print(
+            f"⚠️ Salon principal introuvable dans {guild.name}."
+        )
+        return
+
+    texte = "🏆 **CLASSEMENT GÉNÉRAL COMPLET** 🏆\n\n"
+
+    if not classement:
+        texte += "Aucun joueur dans le top pour le moment."
+
+    else:
+        lignes = []
+
+        for index, user_id in enumerate(classement):
+            lignes.append(
+                f"**Top {index + 1} :** <@{user_id}>"
             )
+
+        texte += "\n".join(lignes)
+
+    message_id = config.get("message_top")
+
+    message = None
+
+    if message_id:
+        try:
+            message = await salon.fetch_message(
+                message_id
+            )
+
+        except discord.NotFound:
+            message = None
+
+        except discord.Forbidden:
+            print(
+                "❌ Le bot n'a pas accès au message principal."
+            )
+            return
+
+        except discord.HTTPException:
+            message = None
+
+    try:
+
+        if message:
+            await message.edit(
+                content=texte,
+                view=VueControleTop()
+            )
+
         else:
-            texte_team = (
-                f"**Aucun joueur assigné à la Team {num_team} "
-                "actuellement.**"
+            message = await salon.send(
+                content=texte,
+                view=VueControleTop()
+            )
+
+            config["message_top"] = message.id
+            sauvegarder_donnees()
+
+    except discord.Forbidden:
+        print(
+            "❌ Le bot ne peut pas envoyer/modifier "
+            "le message du classement."
+        )
+
+    except discord.HTTPException as erreur:
+        print(
+            f"❌ Erreur message principal : {erreur}"
+        )
+
+
+# ============================================================
+# MISE À JOUR DES SALONS TEAMS
+# ============================================================
+
+async def mettre_a_jour_salons_teams(guild, classement):
+    nombre_teams = obtenir_nombre_teams(
+        len(classement)
+    )
+
+    for numero_team in range(1, nombre_teams + 1):
+
+        nom = obtenir_nom_salon_team(numero_team)
+
+        salon = discord.utils.find(
+            lambda channel:
+                channel.name.casefold() == nom.casefold(),
+            guild.text_channels
+        )
+
+        if salon is None:
+            continue
+
+        # Nettoyage des anciens messages du bot.
+        try:
+            await salon.purge(
+                limit=100,
+                check=lambda message:
+                    message.author == bot.user
+            )
+
+        except discord.Forbidden:
+            print(
+                f"⚠️ Impossible de nettoyer #{salon.name}."
+            )
+
+        except discord.HTTPException:
+            pass
+
+        joueurs_team = []
+
+        for index, user_id in enumerate(classement):
+
+            position = index + 1
+
+            if obtenir_equipe(position) == numero_team:
+                joueurs_team.append(
+                    f"**Top {position} :** <@{user_id}>"
+                )
+
+        if joueurs_team:
+            texte = (
+                f"👥 **Membres - Team {numero_team}**\n\n"
+                + "\n".join(joueurs_team)
+            )
+
+        else:
+            texte = (
+                f"**Aucun joueur assigné à la "
+                f"Team {numero_team} actuellement.**"
             )
 
         try:
-            await salon_team.send(texte_team)
+            await salon.send(texte)
+
         except discord.Forbidden:
+            print(
+                f"⚠️ Impossible d'écrire dans #{salon.name}."
+            )
+
+        except discord.HTTPException:
             pass
 
 
-# =========================
-# MODAL : DÉPLACER UN JOUEUR
-# =========================
+# ============================================================
+# RAFRAÎCHISSEMENT COMPLET
+# ============================================================
 
-class FenetreDeplacement(
-    discord.ui.Modal,
-    title="Changer la place (Décaler)"
-):
+async def rafraichir_partout(guild):
+    if guild is None:
+        return
+
+    config = obtenir_donnees_guild(guild.id)
+
+    classement = config["classement"]
+
+    nombre_teams = obtenir_nombre_teams(
+        len(classement)
+    )
+
+    await preparer_teams(
+        guild,
+        nombre_teams
+    )
+
+    await mettre_a_jour_roles(
+        guild,
+        classement
+    )
+
+    await mettre_a_jour_message_top(
+        guild,
+        classement
+    )
+
+    await mettre_a_jour_salons_teams(
+        guild,
+        classement
+    )
+
+    sauvegarder_donnees()
+
+
+# ============================================================
+# MODAL : DÉPLACER
+# ============================================================
+
+class FenetreDeplacement(discord.ui.Modal, title="Changer la place"):
 
     pos_depart = discord.ui.TextInput(
-        label="Position actuelle du joueur",
-        placeholder="Ex: 5"
+        label="Position actuelle",
+        placeholder="Ex : 5",
+        required=True,
+        max_length=5
     )
 
     pos_arrivee = discord.ui.TextInput(
-        label="Sa nouvelle position voulue",
-        placeholder="Ex: 2"
+        label="Nouvelle position",
+        placeholder="Ex : 2",
+        required=True,
+        max_length=5
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
-        global classement_top
+    async def on_submit(self, interaction):
+        config = obtenir_donnees_guild(
+            interaction.guild.id
+        )
+
+        classement = config["classement"]
 
         try:
-            p_dep = int(self.pos_depart.value) - 1
-            p_arr = int(self.pos_arrivee.value) - 1
-
-            if (
-                p_dep < 0
-                or p_arr < 0
-                or p_dep >= len(classement_top)
-                or p_arr >= len(classement_top)
-            ):
-                await interaction.response.send_message(
-                    "❌ Positions invalides.",
-                    ephemeral=True
-                )
-                return
-
-            joueur_id = classement_top.pop(p_dep)
-            classement_top.insert(p_arr, joueur_id)
-
-            await interaction.response.send_message(
-                "✅ Déplacement effectué !",
-                ephemeral=True
-            )
-
-            await rafraichir_partout(interaction.guild)
+            depart = int(self.pos_depart.value) - 1
+            arrivee = int(self.pos_arrivee.value) - 1
 
         except ValueError:
             await interaction.response.send_message(
-                "❌ Veuillez entrer des nombres entiers.",
+                "❌ Les positions doivent être des nombres.",
                 ephemeral=True
             )
+            return
+
+        if not (
+            0 <= depart < len(classement)
+            and 0 <= arrivee < len(classement)
+        ):
+            await interaction.response.send_message(
+                "❌ Une des positions est invalide.",
+                ephemeral=True
+            )
+            return
+
+        joueur = classement.pop(depart)
+        classement.insert(arrivee, joueur)
+
+        sauvegarder_donnees()
+
+        await interaction.response.send_message(
+            "✅ Joueur déplacé avec succès !",
+            ephemeral=True
+        )
+
+        await rafraichir_partout(
+            interaction.guild
+        )
 
 
-# =========================
-# MODAL : ÉCHANGER 2 JOUEURS
-# =========================
+# ============================================================
+# MODAL : ÉCHANGER
+# ============================================================
 
-class FenetreEchange(
-    discord.ui.Modal,
-    title="Échanger 2 places (Permuter)"
-):
+class FenetreEchange(discord.ui.Modal, title="Échanger 2 places"):
 
     pos1 = discord.ui.TextInput(
-        label="Position du 1er joueur",
-        placeholder="Ex: 2"
+        label="Position du premier joueur",
+        placeholder="Ex : 2",
+        required=True,
+        max_length=5
     )
 
     pos2 = discord.ui.TextInput(
-        label="Position du 2ème joueur",
-        placeholder="Ex: 5"
+        label="Position du deuxième joueur",
+        placeholder="Ex : 5",
+        required=True,
+        max_length=5
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
-        global classement_top
+    async def on_submit(self, interaction):
+        config = obtenir_donnees_guild(
+            interaction.guild.id
+        )
+
+        classement = config["classement"]
 
         try:
-            p1 = int(self.pos1.value) - 1
-            p2 = int(self.pos2.value) - 1
-
-            if (
-                p1 < 0
-                or p2 < 0
-                or p1 >= len(classement_top)
-                or p2 >= len(classement_top)
-            ):
-                await interaction.response.send_message(
-                    "❌ Positions invalides.",
-                    ephemeral=True
-                )
-                return
-
-            classement_top[p1], classement_top[p2] = (
-                classement_top[p2],
-                classement_top[p1]
-            )
-
-            await interaction.response.send_message(
-                "✅ Échange effectué !",
-                ephemeral=True
-            )
-
-            await rafraichir_partout(interaction.guild)
+            position1 = int(self.pos1.value) - 1
+            position2 = int(self.pos2.value) - 1
 
         except ValueError:
             await interaction.response.send_message(
-                "❌ Veuillez entrer des nombres entiers.",
+                "❌ Les positions doivent être des nombres.",
                 ephemeral=True
             )
+            return
+
+        if not (
+            0 <= position1 < len(classement)
+            and 0 <= position2 < len(classement)
+        ):
+            await interaction.response.send_message(
+                "❌ Une des positions est invalide.",
+                ephemeral=True
+            )
+            return
+
+        classement[position1], classement[position2] = (
+            classement[position2],
+            classement[position1]
+        )
+
+        sauvegarder_donnees()
+
+        await interaction.response.send_message(
+            "✅ Échange effectué avec succès !",
+            ephemeral=True
+        )
+
+        await rafraichir_partout(
+            interaction.guild
+        )
 
 
-# =========================
-# MODAL : SUPPRIMER UN JOUEUR
-# =========================
+# ============================================================
+# MODAL : SUPPRIMER
+# ============================================================
 
 class FenetreSuppression(
     discord.ui.Modal,
-    title="Retirer un joueur du Top"
+    title="Retirer un joueur"
 ):
 
-    pos_suppr = discord.ui.TextInput(
-        label="Position du joueur à supprimer",
-        placeholder="Ex: 3"
+    position = discord.ui.TextInput(
+        label="Position du joueur",
+        placeholder="Ex : 3",
+        required=True,
+        max_length=5
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
-        global classement_top
+    async def on_submit(self, interaction):
+        config = obtenir_donnees_guild(
+            interaction.guild.id
+        )
+
+        classement = config["classement"]
 
         try:
-            position = int(self.pos_suppr.value) - 1
-
-            if position < 0 or position >= len(classement_top):
-                await interaction.response.send_message(
-                    "❌ Position invalide.",
-                    ephemeral=True
-                )
-                return
-
-            classement_top.pop(position)
-
-            await interaction.response.send_message(
-                "✅ Joueur retiré avec succès !",
-                ephemeral=True
-            )
-
-            await rafraichir_partout(interaction.guild)
+            position = int(self.position.value) - 1
 
         except ValueError:
             await interaction.response.send_message(
-                "❌ Veuillez entrer un nombre valide.",
+                "❌ La position doit être un nombre.",
                 ephemeral=True
             )
-# =========================
-# INTERFACE DES BOUTONS
-# =========================
+            return
+
+        if not 0 <= position < len(classement):
+            await interaction.response.send_message(
+                "❌ Position invalide.",
+                ephemeral=True
+            )
+            return
+
+        classement.pop(position)
+
+        sauvegarder_donnees()
+
+        await interaction.response.send_message(
+            "✅ Joueur retiré du classement !",
+            ephemeral=True
+        )
+
+        await rafraichir_partout(
+            interaction.guild
+        )
+
+
+# ============================================================
+# VUE DES BOUTONS
+# ============================================================
 
 class VueControleTop(discord.ui.View):
 
@@ -435,12 +722,12 @@ class VueControleTop(discord.ui.View):
     @discord.ui.button(
         label="Changer de place",
         style=discord.ButtonStyle.primary,
-        custom_id="btn_deplace"
+        custom_id="classement_deplacer"
     )
-    async def bouton_deplace(
+    async def bouton_deplacer(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
+        interaction,
+        button
     ):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
@@ -456,12 +743,12 @@ class VueControleTop(discord.ui.View):
     @discord.ui.button(
         label="Échanger 2 places",
         style=discord.ButtonStyle.secondary,
-        custom_id="btn_echange"
+        custom_id="classement_echanger"
     )
-    async def bouton_echange(
+    async def bouton_echanger(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
+        interaction,
+        button
     ):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
@@ -477,12 +764,12 @@ class VueControleTop(discord.ui.View):
     @discord.ui.button(
         label="Retirer du Top",
         style=discord.ButtonStyle.danger,
-        custom_id="btn_suppr"
+        custom_id="classement_supprimer"
     )
-    async def bouton_supprime(
+    async def bouton_supprimer(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
+        interaction,
+        button
     ):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
@@ -496,39 +783,64 @@ class VueControleTop(discord.ui.View):
         )
 
 
-# =========================
-# COMMANDES ADMIN
-# =========================
+# ============================================================
+# VÉRIFICATION ADMIN
+# ============================================================
+
+def est_admin(ctx):
+    return (
+        ctx.guild is not None
+        and ctx.author.guild_permissions.administrator
+    )
+
+
+# ============================================================
+# !SETUP
+# ============================================================
 
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
 async def initialiser_salon_top(ctx):
-    global id_salon_principal
-    global id_message_principal
 
-    id_salon_principal = ctx.channel.id
-    id_message_principal = None
+    config = obtenir_donnees_guild(
+        ctx.guild.id
+    )
+
+    config["salon_top"] = ctx.channel.id
+    config["message_top"] = None
+
+    sauvegarder_donnees()
 
     try:
         await ctx.message.delete()
+
     except discord.HTTPException:
         pass
 
-    await rafraichir_partout(ctx.guild)
+    await rafraichir_partout(
+        ctx.guild
+    )
 
+
+# ============================================================
+# !ADD
+# ============================================================
 
 @bot.command(name="add")
 @commands.has_permissions(administrator=True)
-async def ajouter_joueur(
-    ctx,
-    membre: discord.Member
-):
-    global classement_top
+async def ajouter_joueur(ctx, membre: discord.Member):
 
-    if membre.id in classement_top:
+    config = obtenir_donnees_guild(
+        ctx.guild.id
+    )
+
+    classement = config["classement"]
+
+    if membre.id in classement:
+
         await ctx.send(
             f"⚠️ {membre.mention} est déjà dans le classement.",
-            delete_after=4
+            delete_after=5
         )
 
         try:
@@ -538,11 +850,14 @@ async def ajouter_joueur(
 
         return
 
-    classement_top.append(membre.id)
+    classement.append(membre.id)
+
+    sauvegarder_donnees()
 
     await ctx.send(
-        f"✅ {membre.mention} ajouté en fin de liste.",
-        delete_after=3
+        f"✅ {membre.mention} ajouté en position "
+        f"**{len(classement)}**.",
+        delete_after=4
     )
 
     try:
@@ -550,157 +865,203 @@ async def ajouter_joueur(
     except discord.HTTPException:
         pass
 
-    await rafraichir_partout(ctx.guild)
+    await rafraichir_partout(
+        ctx.guild
+    )
 
 
-# =========================
-# NOUVELLE COMMANDE : ADDMANY
-# =========================
+# ============================================================
+# !ADDMANY
+# ============================================================
 
 @bot.command(name="addmany")
 @commands.has_permissions(administrator=True)
-async def ajouter_plusieurs_joueurs(
-    ctx,
-    *membres: discord.Member
-):
-    global classement_top
+async def ajouter_plusieurs_joueurs(ctx, *membres: discord.Member):
 
     if not membres:
         await ctx.send(
-            "❌ Tu dois mentionner au moins un joueur.\n\n"
+            "❌ Mentionne au moins un joueur.\n\n"
             "Exemple :\n"
             "`!addmany @Joueur1 @Joueur2 @Joueur3`",
-            delete_after=6
+            delete_after=7
         )
         return
+
+    config = obtenir_donnees_guild(
+        ctx.guild.id
+    )
+
+    classement = config["classement"]
 
     ajoutes = []
     deja_presents = []
 
     for membre in membres:
 
-        if membre.id not in classement_top:
-            classement_top.append(membre.id)
-            ajoutes.append(membre)
-        else:
-            deja_presents.append(membre)
+        if membre.id in classement:
+            if membre not in deja_presents:
+                deja_presents.append(membre)
+
+            continue
+
+        classement.append(membre.id)
+        ajoutes.append(membre)
+
+    sauvegarder_donnees()
 
     try:
         await ctx.message.delete()
     except discord.HTTPException:
         pass
 
-    message = ""
+    messages = []
 
     if ajoutes:
-        mentions_ajoutes = " ".join(
+        mentions = " ".join(
             membre.mention
             for membre in ajoutes
         )
 
-        message += (
+        messages.append(
             f"✅ **{len(ajoutes)} joueur(s) ajouté(s) :**\n"
-            f"{mentions_ajoutes}"
+            f"{mentions}"
         )
 
     if deja_presents:
-        mentions_existants = " ".join(
+        mentions = " ".join(
             membre.mention
             for membre in deja_presents
         )
 
-        if message:
-            message += "\n\n"
-
-        message += (
-            f"⚠️ **Déjà dans le classement :**\n"
-            f"{mentions_existants}"
+        messages.append(
+            f"⚠️ **Déjà présent(s) :**\n"
+            f"{mentions}"
         )
 
-    await ctx.send(
-        message,
-        delete_after=6
+    if messages:
+        await ctx.send(
+            "\n\n".join(messages),
+            delete_after=7
+        )
+
+    await rafraichir_partout(
+        ctx.guild
     )
 
-    await rafraichir_partout(ctx.guild)
 
+# ============================================================
+# !REMOVE
+# ============================================================
 
 @bot.command(name="remove")
 @commands.has_permissions(administrator=True)
-async def supprimer_joueur_txt(
-    ctx,
-    membre: discord.Member
-):
-    global classement_top
+async def supprimer_joueur(ctx, membre: discord.Member):
 
-    if membre.id in classement_top:
-        classement_top.remove(membre.id)
+    config = obtenir_donnees_guild(
+        ctx.guild.id
+    )
+
+    classement = config["classement"]
+
+    if membre.id not in classement:
 
         await ctx.send(
-            f"✅ {membre.mention} retiré.",
-            delete_after=3
+            f"⚠️ {membre.mention} n'est pas dans le classement.",
+            delete_after=5
         )
+        return
 
-        try:
-            await ctx.message.delete()
-        except discord.HTTPException:
-            pass
+    classement.remove(membre.id)
 
-        await rafraichir_partout(ctx.guild)
+    sauvegarder_donnees()
 
-    else:
-        await ctx.send(
-            "⚠️ Ce joueur n'est pas dans le top.",
-            delete_after=3
-        )
+    await ctx.send(
+        f"✅ {membre.mention} a été retiré du classement.",
+        delete_after=4
+    )
+
+    try:
+        await ctx.message.delete()
+    except discord.HTTPException:
+        pass
+
+    await rafraichir_partout(
+        ctx.guild
+    )
 
 
-# =========================
-# GESTION DES ERREURS
-# =========================
+# ============================================================
+# GESTION DES ERREURS DES COMMANDES
+# ============================================================
 
+@initialiser_salon_top.error
 @ajouter_joueur.error
 @ajouter_plusieurs_joueurs.error
-@supprimer_joueur_txt.error
-async def erreur_commande_joueur(
-    ctx,
-    error
-):
+@supprimer_joueur.error
+async def erreur_commandes(ctx, error):
+
     if isinstance(error, commands.MissingPermissions):
         await ctx.send(
-            "❌ Tu dois être administrateur pour utiliser cette commande.",
+            "❌ Tu dois être administrateur.",
             delete_after=5
         )
+        return
 
-    elif isinstance(error, commands.MissingRequiredArgument):
+    if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(
-            "❌ Tu dois mentionner un ou plusieurs joueurs.",
+            "❌ Il manque un joueur ou un argument.",
             delete_after=5
         )
+        return
 
-    elif isinstance(error, commands.MemberNotFound):
+    if isinstance(error, commands.MemberNotFound):
         await ctx.send(
             "❌ Un des joueurs indiqués est introuvable.",
             delete_after=5
         )
+        return
 
-    else:
-        print(f"Erreur de commande : {error}")
+    print(
+        f"❌ Erreur commande {ctx.command}: {error}"
+    )
 
 
-# =========================
-# BOT PRÊT
-# =========================
+# ============================================================
+# ÉVÉNEMENT READY
+# ============================================================
 
 @bot.event
 async def on_ready():
-    print(f"Bot en ligne : {bot.user.name}")
-    print(f"ID du bot : {bot.user.id}")
+
+    print(
+        f"✅ Bot connecté : {bot.user} "
+        f"(ID : {bot.user.id})"
+    )
+
+    # Rend les boutons persistants après redémarrage.
+    if not getattr(bot, "_vue_ajoutee", False):
+
+        bot.add_view(
+            VueControleTop()
+        )
+
+        bot._vue_ajoutee = True
+
+    print(
+        f"🌐 Connecté à {len(bot.guilds)} serveur(s)."
+    )
 
 
-# =========================
+# ============================================================
+# CHARGEMENT DES DONNÉES
+# ============================================================
+
+charger_donnees()
+
+
+# ============================================================
 # LANCEMENT
-# =========================
+# ============================================================
 
 keep_alive()
 
@@ -708,7 +1069,8 @@ token = os.environ.get("DISCORD_TOKEN")
 
 if not token:
     raise RuntimeError(
-        "La variable d'environnement DISCORD_TOKEN est introuvable."
+        "❌ La variable d'environnement "
+        "DISCORD_TOKEN est introuvable."
     )
 
 bot.run(token)
