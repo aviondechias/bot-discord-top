@@ -30,15 +30,16 @@ id_message_principal = None
 id_salon_principal = None
 
 def obtenir_nom_salon_team(num_team):
+    # Changement du nom de la Team 1 et nettoyage des émojis de la Team 7
     noms_speciaux = {
-        1: "🥇︱𝐓𝐄𝐀𝐌-𝟏🥇",
+        1: "🏅𝐌𝐀𝐈𝐍-𝐑𝐎𝐒𝐓𝐄𝐑🏅",
         2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
         3: "🥉︱𝐓𝐄𝐀𝐌-𝟑🥉",
         4: "🎖︱𝐓𝐄𝐀𝐌-𝟒🎖",
         5: "🏆︱𝐓𝐄𝐀𝐌-𝟓🏆",
         6: "🎗︱𝐓𝐄𝐀𝐌-𝟔🎗",
-        7: "✨️｜𝐓𝐄𝐀𝐌-𝟕✨️",
-        8: "🎫｜𝐓𝐄𝐀𝐌-𝟖🎫"
+        7: "✨︱𝐓𝐄𝐀𝐌-𝟕✨",
+        8: "🎫︱𝐓𝐄𝐀𝐌-𝟖🎫"
     }
     return noms_speciaux.get(num_team, f"💫︱𝐓𝐄𝐀𝐌-{num_team}💫")
 
@@ -114,9 +115,10 @@ async def rafraichir_partout(guild):
             except: pass
             lignes = [f"**Top {i+1}** : <@{uid}>" for i, uid in enumerate(classement_top) if obtenir_equipe_et_salon(i+1) == num_team]
             if lignes:
-                await salon_team.send(f"🏆 **Membres - Team {num_team}** 🏆\n\n" + "\n".join(lignes))
+                titre_affichage = "🏅 𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑 🏅" if num_team == 1 else f"Team {num_team}"
+                await salon_team.send(f"🏆 **Membres - {titre_affichage}** 🏆\n\n" + "\n".join(lignes))
             else:
-                await salon_team.send(f"Aucun joueur assigné à la Team {num_team} actuellement.")
+                await salon_team.send(f"Aucun joueur assigné actuellement.")
 # --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
 
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
