@@ -32,7 +32,7 @@ id_salon_principal = None
 def obtenir_nom_salon_team(num_team):
     """Retourne le nom stylisé du salon Discord pour chaque équipe."""
     noms_speciaux = {
-        1: "🏅𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑🏅",  # Première équipe renommée
+        1: "🏅𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑🏅",
         2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
         3: "🥉︱𝐓𝐄𝐀𝐌-𝟑🥉",
         4: "🎖︱𝐓𝐄𝐀𝐌-𝟒🎖",
@@ -70,7 +70,9 @@ async def rafraichir_partout(guild):
     for member in guild.members:
         if member.id not in classement_top:
             roles_mauvais = [r for r in member.roles if r.name.startswith("Team ") or r.name == "Main Roster"]
-            if roles_mauvais: await member.remove_roles(*roles_mauvais)
+            if roles_mauvais: 
+                try: await member.remove_roles(*roles_mauvais)
+                except: pass
 
     # 2. Création automatique des rôles et salons manquants
     for num_team in range(1, max_team + 1):
@@ -78,26 +80,35 @@ async def rafraichir_partout(guild):
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
 
         if not discord.utils.get(guild.roles, name=nom_role):
-            await guild.create_role(name=nom_role)
+            try: await guild.create_role(name=nom_role)
+            except: pass
             
-        # Comparaison sécurisée pour éviter les conflits d'espaces/minuscules Discord
         salon_existe = any(normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise) for c in guild.channels)
         if not salon_existe:
-            await guild.create_text_channel(name=nom_salon_stylise)
+            try: await guild.create_text_channel(name=nom_salon_stylise)
+            except: pass
 
-    # 3. Mise à jour dynamique des rôles pour les joueurs du top
+    # 3. Mise à jour dynamique des rôles pour les joueurs du top (via fetch_member sécurisé)
     for index, user_id in enumerate(classement_top):
         pos = index + 1
         team_cible = obtenir_equipe_et_salon(pos)
-        member = guild.get_member(user_id)
+        
+        try:
+            member = await guild.fetch_member(user_id)
+        except discord.NotFound:
+            member = None
+
         if member:
             nom_role_cible = obtenir_nom_role_team(team_cible)
             role_bon = discord.utils.get(guild.roles, name=nom_role_cible)
             
-            # Cibler uniquement les rôles d'équipes obsolètes à retirer
             roles_mauvais = [r for r in member.roles if (r.name.startswith("Team ") or r.name == "Main Roster") and r != role_bon]
-            if roles_mauvais: await member.remove_roles(*roles_mauvais)
-            if role_bon and role_bon not in member.roles: await member.add_roles(role_bon)
+            if roles_mauvais: 
+                try: await member.remove_roles(*roles_mauvais)
+                except: pass
+            if role_bon and role_bon not in member.roles: 
+                try: await member.add_roles(role_bon)
+                except: pass
     # 4. Actualisation du message de Classement Général complet
     salon_top = guild.get_channel(id_salon_principal)
     if salon_top:
@@ -125,17 +136,21 @@ async def rafraichir_partout(guild):
         salon_team = discord.utils.find(lambda c: normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise), guild.channels)
         
         if salon_team:
-            try: await salon_team.purge(limit=50)
-            except: pass
-            lignes = [f"**Top {i+1}** : <@{uid}>" for i, uid in enumerate(classement_top) if obtenir_equipe_et_salon(i+1) == num_team]
+            try: 
+                await salon_team.purge(limit=50)
+            except Exception as e:
+                print(f"Impossible de purger le salon Team {num_team} : {e}")
             
-            # Personnalisation du titre textuel envoyé à l'intérieur du salon
+            lignes = [f"**Top {i+1}** : <@{uid}>" for i, uid in enumerate(classement_top) if obtenir_equipe_et_salon(i+1) == num_team]
             titre_affichage = "MAIN ROSTER" if num_team == 1 else f"Team {num_team}"
             
-            if lignes:
-                await salon_team.send(f"🏆 **Membres - {titre_affichage}** 🏆\n\n" + "\n".join(lignes))
-            else:
-                await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
+            try:
+                if lignes:
+                    await salon_team.send(f"🏆 **Membres - {titre_affichage}** 🏆\n\n" + "\n".join(lignes))
+                else:
+                    await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
+            except Exception as e:
+                print(f"Erreur d'envoi dans le salon Team {num_team} : {e}")
 
 # --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
@@ -217,7 +232,6 @@ class VueControleTop(discord.ui.View):
             return
         await interaction.response.send_modal(FenetreSuppression())
 
-    # NOUVEAU : Bouton d'aide visible par tous, mais réponse visible uniquement par l'utilisateur
     @discord.ui.button(label="Liste des Commandes ❓", style=discord.ButtonStyle.success, custom_id="btn_help")
     async def bouton_aide(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
@@ -225,7 +239,6 @@ class VueControleTop(discord.ui.View):
             description="Voici la liste des commandes disponibles pour gérer et consulter le classement.",
             color=discord.Color.gold()
         )
-        
         embed.add_field(
             name="🛠️ Commandes Administrateur",
             value=(
@@ -236,7 +249,6 @@ class VueControleTop(discord.ui.View):
             ),
             inline=False
         )
-        
         embed.add_field(
             name="🎛️ Panneau de Contrôle (Boutons)",
             value=(
@@ -247,10 +259,7 @@ class VueControleTop(discord.ui.View):
             ),
             inline=False
         )
-
         embed.set_footer(text="Note : Les boutons de modification et les commandes sont réservés aux administrateurs.")
-        
-        # Réponse éphémère (ephemeral=True) pour ne pas polluer le salon
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- COMMANDES ADMIN DE BASE ---
@@ -272,7 +281,7 @@ async def ajouter_joueur(ctx, membre: discord.Member):
     await ctx.send(f"✅ {membre.mention} ajouté en fin de liste.", delete_after=3)
     await ctx.message.delete()
     await rafraichir_partout(ctx.guild)
-    
+
 @bot.command(name="addmany")
 @commands.has_permissions(administrator=True)
 async def ajouter_plusieurs_joueurs(ctx, *membres: discord.Member):
@@ -297,7 +306,6 @@ async def ajouter_plusieurs_joueurs(ctx, *membres: discord.Member):
     await ctx.message.delete()
     await rafraichir_partout(ctx.guild)
 
-
 @bot.command(name="remove")
 @commands.has_permissions(administrator=True)
 async def supprimer_joueur_txt(ctx, membre: discord.Member):
@@ -316,3 +324,4 @@ async def on_ready():
 
 keep_alive()
 bot.run(os.environ.get("DISCORD_TOKEN"))
+ 
