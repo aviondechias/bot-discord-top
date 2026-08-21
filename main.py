@@ -31,14 +31,14 @@ id_salon_principal = None
 
 def obtenir_nom_salon_team(num_team):
     noms_speciaux = {
-        1: "🥇︱𝐓𝐄𝐀𝐌-𝟏🥇",
+        1: "🥇︱𝐓𝐄𝐀𝐌-𝟏🥈",
         2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
         3: "🥉︱𝐓𝐄𝐀𝐌-𝟑🥉",
         4: "🎖︱𝐓𝐄𝐀𝐌-𝟒🎖",
         5: "🏆︱𝐓𝐄𝐀𝐌-𝟓🏆",
         6: "🎗︱𝐓𝐄𝐀𝐌-𝟔🎗",
-        7: "✨️｜𝐓𝐄𝐀𝐌-𝟕✨️",
-        8: "🎫｜𝐓𝐄𝐀𝐌-𝟖🎫"
+        7: "✨️︱𝐓𝐄𝐀𝐌-𝟕✨️",
+        8: "🎫︱𝐓𝐄𝐀𝐌-𝟖🎫"
     }
     return noms_speciaux.get(num_team, f"💫︱𝐓𝐄𝐀𝐌-{num_team}💫")
 
