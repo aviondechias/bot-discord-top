@@ -236,6 +236,31 @@ async def ajouter_joueur(ctx, membre: discord.Member):
     await ctx.send(f"✅ {membre.mention} ajouté en fin de liste.", delete_after=3)
     await ctx.message.delete()
     await rafraichir_partout(ctx.guild)
+    
+@bot.command(name="addmany")
+@commands.has_permissions(administrator=True)
+async def ajouter_plusieurs_joueurs(ctx, *membres: discord.Member):
+    global classement_top
+    if not membres:
+        await ctx.send("❌ Veuillez mentionner au moins un joueur. Exemple : `!addmany @joueur1 @joueur2`", delete_after=5)
+        await ctx.message.delete()
+        return
+
+    membres_ajoutes = []
+    for membre in membres:
+        if membre.id not in classement_top:
+            classement_top.append(membre.id)
+            membres_ajoutes.append(membre.mention)
+
+    if membres_ajoutes:
+        liste_mentions = ", ".join(membres_ajoutes)
+        await ctx.send(f"✅ Joueurs ajoutés en fin de liste : {liste_mentions}", delete_after=5)
+    else:
+        await ctx.send("ℹ️ Tous les joueurs mentionnés sont déjà dans le classement.", delete_after=5)
+
+    await ctx.message.delete()
+    await rafraichir_partout(ctx.guild)
+
 
 @bot.command(name="remove")
 @commands.has_permissions(administrator=True)
