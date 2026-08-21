@@ -247,8 +247,9 @@ class VueControleTop(discord.ui.View):
                 "`!setup` : Initialise le système dans le salon actuel (affiche le classement général).\n"
                 "`!add @membre` : Ajoute un joueur à la fin du classement.\n"
                 "`!addmany @m1 @m2...` : Ajoute plusieurs joueurs en même temps.\n"
-                "`!remove @membre` : Retire un joueur spécifique du classement."
-            ),
+                "`!remove @membre` : Retire un joueur spécifique du classement.\n"
+              "`!twin [Code_Match] [@Membre]` : fait monter de place un membre dans le tournoi.\n"
+                "`!start` : Commence un tournoi entre les joueur."            )
             inline=False
         )
         embed.add_field(
