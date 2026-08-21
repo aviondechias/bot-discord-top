@@ -38,7 +38,7 @@ def obtenir_nom_salon_team(num_team):
         4: "🎖︱𝐓𝐄𝐀𝐌-𝟒🎖",
         5: "🏆︱𝐓𝐄𝐀𝐌-𝟓🏆",
         6: "🎗︱𝐓𝐄𝐀𝐌-𝟔🎗",
-        7: "✨️︱𝐓𝐄𝐀𝐌-𝟕✨️",
+        7: "🎟︱𝐓𝐄𝐀𝐌-𝟕🎟",  # Émoji ✨ nettoyé du caractère invisible ici !
         8: "🎫︱𝐓𝐄𝐀𝐌-𝟖🎫"
     }
     return noms_speciaux.get(num_team, f"💫︱𝐓𝐄𝐀𝐌-{num_team}💫")
@@ -56,8 +56,9 @@ def obtenir_equipe_et_salon(position):
     return 2 + (position - 6) // 6
 
 def normaliser_nom_salon(nom):
-    """Nettoie le nom du salon pour éviter les erreurs de détection dues aux tirets/espaces de Discord."""
-    return nom.lower().replace("-", "").replace(" ", "")
+    """Nettoie en profondeur le nom du salon pour éviter les erreurs d'émojis et de tirets Discord."""
+    # En plus des tirets et espaces, on retire le sélecteur de variante invisible (\ufe0f) que Discord supprime
+    return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
 
 async def rafraichir_partout(guild):
     global id_message_principal, id_salon_principal
@@ -88,7 +89,7 @@ async def rafraichir_partout(guild):
             try: await guild.create_text_channel(name=nom_salon_stylise)
             except: pass
 
-    # 3. Mise à jour dynamique des rôles pour les joueurs du top (via fetch_member sécurisé)
+    # 3. Mise à jour dynamique des rôles pour les joueurs du top
     for index, user_id in enumerate(classement_top):
         pos = index + 1
         team_cible = obtenir_equipe_et_salon(pos)
@@ -109,6 +110,7 @@ async def rafraichir_partout(guild):
             if role_bon and role_bon not in member.roles: 
                 try: await member.add_roles(role_bon)
                 except: pass
+
     # 4. Actualisation du message de Classement Général complet
     salon_top = guild.get_channel(id_salon_principal)
     if salon_top:
