@@ -247,6 +247,8 @@ class VueControleTop(discord.ui.View):
                 "`!tstart` : Lance la phase d'inscription pour un tournoi flash.\n"
                 "`!twin [Code_Match] @membre` : Valide le gagnant d'un match (Ex: `!twin Q1 @membre`)."
             ),
+              "`!twin [Code_Match] [@Membre]` : fait monter de place un membre dans le tournoi.\n"
+                "`!start` : Commence un tournoi entre les joueur."            )
             inline=False
         )
         embed.add_field(
