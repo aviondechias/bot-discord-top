@@ -38,7 +38,7 @@ def obtenir_nom_salon_team(num_team):
         4: "🎖︱𝐓𝐄𝐀𝐌-𝟒🎖",
         5: "🏆︱𝐓𝐄𝐀𝐌-𝟓🏆",
         6: "🎗︱𝐓𝐄𝐀𝐌-𝟔🎗",
-        7: "✨︱𝐓𝐄𝐀𝐌-𝟕✨",  # Version nettoyée sans caractère invisible
+        7: "✨︱𝐓𝐄𝐀𝐌-𝟕✨",
         8: "🎫︱𝐓𝐄𝐀𝐌-𝟖🎫"
     }
     return noms_speciaux.get(num_team, f"💫︱𝐓𝐄𝐀𝐌-{num_team}💫")
@@ -87,7 +87,7 @@ async def rafraichir_partout(guild):
             try: await guild.create_text_channel(name=nom_salon_stylise)
             except: pass
 
-    # 3. Mise à jour dynamique des rôles pour les joueurs du top (sécurisé via fetch_member)
+    # 3. Mise à jour dynamique des rôles pour les joueurs du top
     for index, user_id in enumerate(classement_top):
         pos = index + 1
         team_cible = obtenir_equipe_et_salon(pos)
@@ -203,7 +203,6 @@ class FenetreSuppression(discord.ui.Modal, title="Retirer un joueur du Top"):
             await rafraichir_partout(interaction.guild)
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer un nombre valide.", ephemeral=True)
-
 # --- BLOC DE CONTROLE (BOUTONS) ---
 class VueControleTop(discord.ui.View):
     def __init__(self):
@@ -247,8 +246,6 @@ class VueControleTop(discord.ui.View):
                 "`!tstart` : Lance la phase d'inscription pour un tournoi flash.\n"
                 "`!twin [Code_Match] @membre` : Valide le gagnant d'un match (Ex: `!twin Q1 @membre`)."
             ),
-              "`!twin [Code_Match] [@Membre]` : fait monter de place un membre dans le tournoi.\n"
-                "`!start` : Commence un tournoi entre les joueur."            )
             inline=False
         )
         embed.add_field(
@@ -288,21 +285,21 @@ def generer_affichage_tournoi():
 
     texte += "◽ **QUARTS DE FINALE** ◽\n"
     for m in range(1, 5):
-        p1 = f"<@{tournoi_matchs[f'Q{m}']}>" if f'Q{m}' in tournoi_matchs else "À définir"
-        p2 = f"<@{tournoi_matchs[f'Q{m}']}>" if f'Q{m}' in tournoi_matchs else "À définir"
+        p1 = f"<@{tournoi_matchs[f'Q{m}'][0]}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 0 else "À définir"
+        p2 = f"<@{tournoi_matchs[f'Q{m}'][1]}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 1 else "À définir"
         v = f"🏅 Vainqueur : <@{tournoi_vainqueurs[f'Q{m}']}>" if f'Q{m}' in tournoi_vainqueurs else "En attente..."
         texte += f"🔹 **Match Q{m}** : {p1} **VS** {p2}\n   └─ {v}\n"
     
     texte += "\n◽ **DEMI-FINALES** ◽\n"
     for m in range(1, 3):
-        p1 = f"<@{tournoi_matchs[f'D{m}']}>" if f'D{m}' in tournoi_matchs else "En attente..."
-        p2 = f"<@{tournoi_matchs[f'D{m}']}>" if f'D{m}' in tournoi_matchs else "En attente..."
+        p1 = f"<@{tournoi_matchs[f'D{m}'][0]}>" if f'D{m}' in tournoi_matchs and len(tournoi_matchs[f'D{m}']) > 0 else "En attente..."
+        p2 = f"<@{tournoi_matchs[f'D{m}'][1]}>" if f'D{m}' in tournoi_matchs and len(tournoi_matchs[f'D{m}']) > 1 else "En attente..."
         v = f"🏅 Vainqueur : <@{tournoi_vainqueurs[f'D{m}']}>" if f'D{m}' in tournoi_vainqueurs else "En attente..."
         texte += f"🔹 **Match D{m}** : {p1} **VS** {p2}\n   └─ {v}\n"
 
     texte += "\n👑 **GRANDE FINALE** ◽\n"
-    p1 = f"<@{tournoi_matchs['F1']}>" if 'F1' in tournoi_matchs else "En attente..."
-    p2 = f"<@{tournoi_matchs['F1']}>" if 'F1' in tournoi_matchs else "En attente..."
+    p1 = f"<@{tournoi_matchs['F1'][0]}>" if 'F1' in tournoi_matchs and len(tournoi_matchs['F1']) > 0 else "En attente..."
+    p2 = f"<@{tournoi_matchs['F1'][1]}>" if 'F1' in tournoi_matchs and len(tournoi_matchs['F1']) > 1 else "En attente..."
     if 'F1' in tournoi_vainqueurs:
         texte += f"🏆 **Match F1** : {p1} **VS** {p2}\n   └─ 🎉 **CHAMPION : <@{tournoi_vainqueurs['F1']}>** 🎉\n"
     else:
@@ -326,10 +323,10 @@ class VueInscriptionTournoi(discord.ui.View):
         tournoi_inscrits.append(interaction.user.id)
         if len(tournoi_inscrits) == 8:
             tournoi_etape = "quarts"
-            tournoi_matchs['Q1'] = [tournoi_inscrits, tournoi_inscrits]
-            tournoi_matchs['Q2'] = [tournoi_inscrits, tournoi_inscrits]
-            tournoi_matchs['Q3'] = [tournoi_inscrits, tournoi_inscrits]
-            tournoi_matchs['Q4'] = [tournoi_inscrits, tournoi_inscrits]
+            tournoi_matchs['Q1'] = [tournoi_inscrits[0], tournoi_inscrits[7]]
+            tournoi_matchs['Q2'] = [tournoi_inscrits[1], tournoi_inscrits[6]]
+            tournoi_matchs['Q3'] = [tournoi_inscrits[2], tournoi_inscrits[5]]
+            tournoi_matchs['Q4'] = [tournoi_inscrits[3], tournoi_inscrits[4]]
             await interaction.response.send_message("🎉 Tu es le 8ème joueur ! Le tournoi se lance !", ephemeral=True)
             await interaction.message.edit(content=generer_affichage_tournoi(), view=None)
         else:
