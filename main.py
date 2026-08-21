@@ -323,6 +323,149 @@ async def supprimer_joueur_txt(ctx, membre: discord.Member):
 @bot.event
 async def on_ready():
     print(f"Bot en ligne : {bot.user.name}")
+# --- LOGIQUE DU MODE TOURNOI FLASH (8 JOUEURS) ---
+tournoi_inscrits = []
+tournoi_etape = "ferme"  # ferme, inscriptions, quarts, demis, finale
+tournoi_matchs = {}      # Stocke les matchs en cours
+tournoi_vainqueurs = {}  # Stocke les vainqueurs de chaque match
+id_message_tournoi = None
+id_salon_tournoi = None
+
+def generer_affichage_tournoi():
+    """Génère l'affichage textuel de l'arbre du tournoi selon l'étape actuelle."""
+    global tournoi_etape, tournoi_matchs, tournoi_vainqueurs
+    
+    texte = "⚔️ ─── **TOURNOI FLASH AUTOMATIQUE** ─── ⚔️\n\n"
+    
+    if tournoi_etape == "inscriptions":
+        texte += f"📌 **Statut : Inscriptions ouvertes !**\n"
+        texte += f"Places occupées : **{len(tournoi_inscrits)} / 8**\n\n"
+        if tournoi_inscrits:
+            texte += "📋 **Liste des participants :**\n"
+            for index, u_id in enumerate(tournoi_inscrits):
+                texte += f"{index + 1}. <@{u_id}>\n"
+        else:
+            texte += "*En attente de courageux guerriers... Clique sur le bouton ci-dessous !*"
+        return texte
+
+    # Affichage des Quarts de Finale
+    texte += "◽ **QUARTS DE FINALE** ◽\n"
+    for m in range(1, 5):
+        p1 = f"<@{tournoi_matchs[f'Q{m}'][0]}>" if f'Q{m}' in tournoi_matchs else "À définir"
+        p2 = f"<@{tournoi_matchs[f'Q{m}'][1]}>" if f'Q{m}' in tournoi_matchs else "À définir"
+        v = f"🏅 Vainqueur : <@{tournoi_vainqueurs[f'Q{m}']}>" if f'Q{m}' in tournoi_vainqueurs else "En attente..."
+        texte += f"🔹 **Match Q{m}** : {p1} **VS** {p2}\n   └─ {v}\n"
+    
+    texte += "\n◽ **DEMI-FINALES** ◽\n"
+    for m in range(1, 3):
+        p1 = f"<@{tournoi_matchs[f'D{m}'][0]}>" if f'D{m}' in tournoi_matchs else "En attente..."
+        p2 = f"<@{tournoi_matchs[f'D{m}'][1]}>" if f'D{m}' in tournoi_matchs else "En attente..."
+        v = f"🏅 Vainqueur : <@{tournoi_vainqueurs[f'D{m}']}>" if f'D{m}' in tournoi_vainqueurs else "En attente..."
+        texte += f"🔹 **Match D{m}** : {p1} **VS** {p2}\n   └─ {v}\n"
+
+    texte += "\n👑 **GRANDE FINALE** ◽\n"
+    p1 = f"<@{tournoi_matchs['F1'][0]}>" if 'F1' in tournoi_matchs else "En attente..."
+    p2 = f"<@{tournoi_matchs['F1'][1]}>" if 'F1' in tournoi_matchs else "En attente..."
+    if 'F1' in tournoi_vainqueurs:
+        texte += f"🏆 **Match F1** : {p1} **VS** {p2}\n   └─ 🎉 **CHAMPION : <@{tournoi_vainqueurs['F1']}>** 🎉\n"
+    else:
+        texte += f"🏆 **Match F1** : {p1} **VS** {p2}\n   └─ En attente du couronnement...\n"
+        
+    return texte
+
+class VueInscriptionTournoi(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="S'inscrire au Tournoi ⚔️", style=discord.ButtonStyle.success, custom_id="btn_join_tournoi")
+    async def bouton_inscription(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global tournoi_inscrits, tournoi_etape, tournoi_matchs, id_message_tournoi
+        
+        if tournoi_etape != "inscriptions":
+            await interaction.response.send_message("❌ Les inscriptions sont fermées.", ephemeral=True)
+            return
+            
+        if interaction.user.id in tournoi_inscrits:
+            await interaction.response.send_message("⚠️ Tu es déjà inscrit à ce tournoi !", ephemeral=True)
+            return
+
+        tournoi_inscrits.append(interaction.user.id)
+        
+        # Si on atteint 8 joueurs, on lance automatiquement le tournoi
+        if len(tournoi_inscrits) == 8:
+            tournoi_etape = "quarts"
+            # Génération des paires pour les quarts
+            tournoi_matchs['Q1'] = [tournoi_inscrits[0], tournoi_inscrits[7]]
+            tournoi_matchs['Q2'] = [tournoi_inscrits[1], tournoi_inscrits[6]]
+            tournoi_matchs['Q3'] = [tournoi_inscrits[2], tournoi_inscrits[5]]
+            tournoi_matchs['Q4'] = [tournoi_inscrits[3], tournoi_inscrits[4]]
+            
+            await interaction.response.send_message("🎉 Tu es le 8ème joueur ! Le tournoi se lance !", ephemeral=True)
+            await interaction.message.edit(content=generer_affichage_tournoi(), view=None) # On retire le bouton
+        else:
+            await interaction.response.send_message("✅ Inscription validée ! Prépare-toi au combat.", ephemeral=True)
+            await interaction.message.edit(content=generer_affichage_tournoi(), view=self)
+
+# --- COMMANDES ADMIN DU TOURNOI ---
+
+@bot.command(name="tstart")
+@commands.has_permissions(administrator=True)
+async def lancer_inscriptions_tournoi(ctx):
+    """Lance la phase d'inscription pour un tournoi flash de 8 joueurs."""
+    global tournoi_inscrits, tournoi_etape, tournoi_matchs, tournoi_vainqueurs, id_message_tournoi, id_salon_tournoi
+    
+    tournoi_inscrits = []
+    tournoi_matchs = {}
+    tournoi_vainqueurs = {}
+    tournoi_etape = "inscriptions"
+    id_salon_tournoi = ctx.channel.id
+    
+    await ctx.message.delete()
+    view = VueInscriptionTournoi()
+    msg = await ctx.send(content=generer_affichage_tournoi(), view=view)
+    id_message_tournoi = msg.id
+
+@bot.command(name="twin")
+@commands.has_permissions(administrator=True)
+async def valider_gagnant_match(ctx, code_match: str, membre: discord.Member):
+    """Désigne le gagnant d'un match (Exemple : !twin Q1 @membre)."""
+    global tournoi_etape, tournoi_matchs, tournoi_vainqueurs, id_message_tournoi, id_salon_tournoi
+    
+    if not id_message_tournoi or not id_salon_tournoi:
+        await ctx.send("❌ Aucun tournoi actif trouvé.", delete_after=3)
+        return
+        
+    code_match = code_match.upper()
+    if code_match not in tournoi_matchs:
+        await ctx.send("❌ Code match invalide (Exemples valides : Q1, Q2, D1, F1...).", delete_after=5)
+        return
+
+    if membre.id not in tournoi_matchs[code_match]:
+        await ctx.send("❌ Ce joueur ne fait pas partie de ce match.", delete_after=5)
+        return
+
+    tournoi_vainqueurs[code_match] = membre.id
+    await ctx.message.delete()
+
+    # Logique de passage aux Demi-Finales
+    if tournoi_etape == "quarts" and len([k for k in tournoi_vainqueurs if k.startswith('Q')]) == 4:
+        tournoi_etape = "demis"
+        tournoi_matchs['D1'] = [tournoi_vainqueurs['Q1'], tournoi_vainqueurs['Q2']]
+        tournoi_matchs['D2'] = [tournoi_vainqueurs['Q3'], tournoi_vainqueurs['Q4']]
+
+    # Logique de passage à la Finale
+    elif tournoi_etape == "demis" and len([k for k in tournoi_vainqueurs if k.startswith('D')]) == 2:
+        tournoi_etape = "finale"
+        tournoi_matchs['F1'] = [tournoi_vainqueurs['D1'], tournoi_vainqueurs['D2']]
+
+    # Récupération et édition de l'arbre visuel
+    salon = bot.get_channel(id_salon_tournoi)
+    if salon:
+        try:
+            msg = await salon.fetch_message(id_message_tournoi)
+            await msg.edit(content=generer_affichage_tournoi())
+        except:
+            pass
 
 keep_alive()
 bot.run(os.environ.get("DISCORD_TOKEN"))
