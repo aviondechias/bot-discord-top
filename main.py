@@ -30,8 +30,9 @@ id_message_principal = None
 id_salon_principal = None
 
 def obtenir_nom_salon_team(num_team):
+    """Retourne le nom stylisé du salon Discord pour chaque équipe."""
     noms_speciaux = {
-        1: "🥇︱𝐓𝐄𝐀𝐌-𝟏🥈",
+        1: "🏅𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑🏅",  # Première équipe renommée
         2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
         3: "🥉︱𝐓𝐄𝐀𝐌-𝟑🥉",
         4: "🎖︱𝐓𝐄𝐀𝐌-𝟒🎖",
@@ -42,10 +43,21 @@ def obtenir_nom_salon_team(num_team):
     }
     return noms_speciaux.get(num_team, f"💫︱𝐓𝐄𝐀𝐌-{num_team}💫")
 
+def obtenir_nom_role_team(num_team):
+    """Retourne le nom exact du rôle pour chaque équipe (Main Roster pour la team 1)."""
+    if num_team == 1:
+        return "Main Roster"
+    return f"Team {num_team}"
+
 def obtenir_equipe_et_salon(position):
+    """Détermine le numéro d'équipe en fonction du classement du joueur."""
     if position <= 5: 
         return 1
     return 2 + (position - 6) // 6
+
+def normaliser_nom_salon(nom):
+    """Nettoie le nom du salon pour éviter les erreurs de détection dues aux tirets/espaces de Discord."""
+    return nom.lower().replace("-", "").replace(" ", "")
 
 async def rafraichir_partout(guild):
     global id_message_principal, id_salon_principal
@@ -57,18 +69,19 @@ async def rafraichir_partout(guild):
     # 1. Nettoyage des rôles sur les membres hors classement
     for member in guild.members:
         if member.id not in classement_top:
-            roles_mauvais = [r for r in member.roles if r.name.startswith("Team ")]
+            roles_mauvais = [r for r in member.roles if r.name.startswith("Team ") or r.name == "Main Roster"]
             if roles_mauvais: await member.remove_roles(*roles_mauvais)
 
     # 2. Création automatique des rôles et salons manquants
     for num_team in range(1, max_team + 1):
-        nom_role = f"Team {num_team}"
+        nom_role = obtenir_nom_role_team(num_team)
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
 
         if not discord.utils.get(guild.roles, name=nom_role):
             await guild.create_role(name=nom_role)
             
-        salon_existe = any(c.name.lower() == nom_salon_stylise.lower() for c in guild.channels)
+        # Comparaison sécurisée pour éviter les conflits d'espaces/minuscules Discord
+        salon_existe = any(normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise) for c in guild.channels)
         if not salon_existe:
             await guild.create_text_channel(name=nom_salon_stylise)
 
@@ -78,11 +91,13 @@ async def rafraichir_partout(guild):
         team_cible = obtenir_equipe_et_salon(pos)
         member = guild.get_member(user_id)
         if member:
-            role_bon = discord.utils.get(guild.roles, name=f"Team {team_cible}")
-            roles_mauvais = [r for r in member.roles if r.name.startswith("Team ") and r != role_bon]
+            nom_role_cible = obtenir_nom_role_team(team_cible)
+            role_bon = discord.utils.get(guild.roles, name=nom_role_cible)
+            
+            # Cibler uniquement les rôles d'équipes obsolètes à retirer
+            roles_mauvais = [r for r in member.roles if (r.name.startswith("Team ") or r.name == "Main Roster") and r != role_bon]
             if roles_mauvais: await member.remove_roles(*roles_mauvais)
             if role_bon and role_bon not in member.roles: await member.add_roles(role_bon)
-
     # 4. Actualisation du message de Classement Général complet
     salon_top = guild.get_channel(id_salon_principal)
     if salon_top:
@@ -107,18 +122,22 @@ async def rafraichir_partout(guild):
     # 5. Nettoyage et affichage actualisé dans les salons de Teams respectifs
     for num_team in range(1, max_team + 1):
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
-        salon_team = discord.utils.find(lambda c: c.name.lower() == nom_salon_stylise.lower(), guild.channels)
+        salon_team = discord.utils.find(lambda c: normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise), guild.channels)
         
         if salon_team:
             try: await salon_team.purge(limit=50)
             except: pass
             lignes = [f"**Top {i+1}** : <@{uid}>" for i, uid in enumerate(classement_top) if obtenir_equipe_et_salon(i+1) == num_team]
+            
+            # Personnalisation du titre textuel envoyé à l'intérieur du salon
+            titre_affichage = "MAIN ROSTER" if num_team == 1 else f"Team {num_team}"
+            
             if lignes:
-                await salon_team.send(f"🏆 **Membres - Team {num_team}** 🏆\n\n" + "\n".join(lignes))
+                await salon_team.send(f"🏆 **Membres - {titre_affichage}** 🏆\n\n" + "\n".join(lignes))
             else:
-                await salon_team.send(f"Aucun joueur assigné à la Team {num_team} actuellement.")
-# --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
+                await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
 
+# --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
     pos_arrivee = discord.ui.TextInput(label="Sa nouvelle position voulue", placeholder="Ex: 2")
