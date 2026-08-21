@@ -217,6 +217,42 @@ class VueControleTop(discord.ui.View):
             return
         await interaction.response.send_modal(FenetreSuppression())
 
+    # NOUVEAU : Bouton d'aide visible par tous, mais réponse visible uniquement par l'utilisateur
+    @discord.ui.button(label="Liste des Commandes ❓", style=discord.ButtonStyle.success, custom_id="btn_help")
+    async def bouton_aide(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🤖 Guide des commandes du Bot de Classement",
+            description="Voici la liste des commandes disponibles pour gérer et consulter le classement.",
+            color=discord.Color.gold()
+        )
+        
+        embed.add_field(
+            name="🛠️ Commandes Administrateur",
+            value=(
+                "`!setup` : Initialise le système dans le salon actuel (affiche le classement général).\n"
+                "`!add @membre` : Ajoute un joueur à la fin du classement.\n"
+                "`!addmany @m1 @m2...` : Ajoute plusieurs joueurs en même temps.\n"
+                "`!remove @membre` : Retire un joueur spécifique du classement."
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🎛️ Panneau de Contrôle (Boutons)",
+            value=(
+                "📈 **Changer de place** : Décaler un joueur vers une autre position.\n"
+                "🔄 **Échanger 2 places** : Permuter les positions de deux joueurs.\n"
+                "❌ **Retirer du Top** : Supprimer un joueur via son numéro de Top.\n"
+                "❓ **Liste des Commandes** : Affiche ce guide (visible uniquement par vous)."
+            ),
+            inline=False
+        )
+
+        embed.set_footer(text="Note : Les boutons de modification et les commandes sont réservés aux administrateurs.")
+        
+        # Réponse éphémère (ephemeral=True) pour ne pas polluer le salon
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # --- COMMANDES ADMIN DE BASE ---
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
