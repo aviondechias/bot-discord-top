@@ -4,6 +4,7 @@ import asyncio
 from flask import Flask
 from threading import Thread
 import os
+import json
 
 # --- SERVEUR WEB KEEP-ALIVE ---
 app = Flask('')
@@ -28,6 +29,23 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 classement_top = []
 id_message_principal = None
 id_salon_principal = None
+
+ROLE_ADMIN_ID = 1529373902969770094
+FICHIER_SAUVEGARDE = "sauvegardes_top.json"
+def charger_sauvegardes():
+    """Charge les sauvegardes depuis le fichier JSON permanent."""
+    if not os.path.exists(FICHIER_SAUVEGARDE):
+        return {}
+    try:
+        with open(FICHIER_SAUVEGARDE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def enregistrer_sauvegardes(data):
+    """Enregistre les données dans le fichier JSON permanent."""
+    with open(FICHIER_SAUVEGARDE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
 
 def obtenir_nom_salon_team(num_team):
     """Retourne le nom stylisé du salon Discord pour chaque équipe."""
@@ -203,6 +221,7 @@ class FenetreSuppression(discord.ui.Modal, title="Retirer un joueur du Top"):
             await rafraichir_partout(interaction.guild)
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer un nombre valide.", ephemeral=True)
+
 # --- BLOC DE CONTROLE (BOUTONS) ---
 class VueControleTop(discord.ui.View):
     def __init__(self):
@@ -229,6 +248,20 @@ class VueControleTop(discord.ui.View):
             return
         await interaction.response.send_modal(FenetreSuppression())
 
+    @discord.ui.button(label="DATA 🗄️", style=discord.ButtonStyle.danger, custom_id="btn_data_panel")
+    async def bouton_data_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role_verif = discord.utils.get(interaction.user.roles, id=ROLE_ADMIN_ID)
+        if not role_verif and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Accès refusé. Rôle ADMIN requis.", ephemeral=True)
+            return
+
+        view = VueDataOptions()
+        await interaction.response.send_message(
+            content="🗄️ **Gestion de la Base de Données**\nCe panneau éphémère vous permet d'enregistrer et de restaurer la progression du classement général.", 
+            view=view, 
+            ephemeral=True
+        )
+
     @discord.ui.button(label="Liste des Commandes ❓", style=discord.ButtonStyle.success, custom_id="btn_help")
     async def bouton_aide(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
@@ -254,12 +287,57 @@ class VueControleTop(discord.ui.View):
                 "📈 **Changer de place** : Décaler un joueur vers une autre position.\n"
                 "🔄 **Échanger 2 places** : Permuter les positions de deux joueurs.\n"
                 "❌ **Retirer du Top** : Supprimer un joueur via son numéro de Top.\n"
+                "🗄️ **DATA** : Panneau de sauvegarde sécurisé (Rôle Admin uniquement).\n"
                 "❓ **Liste des Commandes** : Affiche ce guide (visible uniquement par vous)."
             ),
             inline=False
         )
         embed.set_footer(text="Note : Les boutons de modification et les commandes sont réservés aux administrateurs.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+class VueActionSauvegarde(discord.ui.View):
+    def __init__(self, nom_sauvegarde):
+        super().__init__(timeout=60)
+        self.nom_sauvegarde = nom_sauvegarde
+
+    @discord.ui.button(label="RESTAURER (Remplacer le Top) 🔄", style=discord.ButtonStyle.danger)
+    async def btn_restaurer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view = VueConfirmationRestauration(self.nom_sauvegarde)
+        await interaction.response.send_message(
+            content=f"⚠️ **ATTENTION** : Êtes-vous sûr de vouloir charger `{self.nom_sauvegarde}` ? Cela écrasera définitivement la configuration actuelle du Top.", 
+            view=view, 
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="SUPPRIMER LA SAUVEGARDE 🗑️", style=discord.ButtonStyle.secondary)
+    async def btn_supprimer_save(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sauvegardes = charger_sauvegardes()
+        if self.nom_sauvegarde in sauvegardes:
+            del sauvegardes[self.nom_sauvegarde]
+            enregistrer_sauvegardes(sauvegardes)
+            await interaction.response.send_message(f"🗑️ L'enregistrement `{self.nom_sauvegarde}` a été supprimé définitivement de la base de données.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Sauvegarde introuvable.", ephemeral=True)
+
+class VueConfirmationRestauration(discord.ui.View):
+    def __init__(self, nom_sauvegarde):
+        super().__init__(timeout=30)
+        self.nom_sauvegarde = nom_sauvegarde
+
+    @discord.ui.button(label="OUI, ACCEPTER 🛠️", style=discord.ButtonStyle.danger)
+    async def btn_oui(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global classement_top
+        sauvegardes = charger_sauvegardes()
+        
+        if self.nom_sauvegarde in sauvegardes:
+            classement_top = list(sauvegardes[self.nom_sauvegarde])
+            await interaction.response.send_message(f"✅ **Restauration effectuée avec succès !** La configuration `{self.nom_sauvegarde}` est maintenant active.", ephemeral=True)
+            await rafraichir_partout(interaction.guild)
+        else:
+            await interaction.response.send_message("❌ Échec : La sauvegarde a disparu.", ephemeral=True)
+
+    @discord.ui.button(label="NON, ANNULER ❌", style=discord.ButtonStyle.secondary)
+    async def btn_non(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Opération annulée. Aucun changement appliqué.", ephemeral=True)
 # --- LOGIQUE DU MODE TOURNOI FLASH (8 JOUEURS) ---
 tournoi_inscrits = []
 tournoi_etape = "ferme"
@@ -333,7 +411,6 @@ class VueInscriptionTournoi(discord.ui.View):
             await interaction.response.send_message("✅ Inscription validée !", ephemeral=True)
             await interaction.message.edit(content=generer_affichage_tournoi(), view=self)
 
-# --- COMMANDES ADMIN DE BASE ---
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
 async def initialiser_salon_top(ctx):
