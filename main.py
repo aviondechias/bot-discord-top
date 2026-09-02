@@ -32,8 +32,8 @@ id_salon_principal = None
 
 ROLE_ADMIN_ID = 1529373902969770094
 FICHIER_SAUVEGARDE = "sauvegardes_top.json"
+
 def charger_sauvegardes():
-    """Charge les sauvegardes depuis le fichier JSON permanent."""
     if not os.path.exists(FICHIER_SAUVEGARDE):
         return {}
     try:
@@ -43,12 +43,10 @@ def charger_sauvegardes():
         return {}
 
 def enregistrer_sauvegardes(data):
-    """Enregistre les données dans le fichier JSON permanent."""
     with open(FICHIER_SAUVEGARDE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def obtenir_nom_salon_team(num_team):
-    """Retourne le nom stylisé du salon Discord pour chaque équipe."""
     noms_speciaux = {
         1: "🏅𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑🏅",
         2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
@@ -62,19 +60,16 @@ def obtenir_nom_salon_team(num_team):
     return noms_speciaux.get(num_team, f"💫︱𝐓𝐄𝐀𝐌-{num_team}💫")
 
 def obtenir_nom_role_team(num_team):
-    """Retourne le nom exact du rôle pour chaque équipe (Main Roster pour la team 1)."""
     if num_team == 1:
         return "Main Roster"
     return f"Team {num_team}"
 
 def obtenir_equipe_et_salon(position):
-    """Détermine le numéro d'équipe en fonction du classement du joueur."""
     if position <= 5: 
         return 1
     return 2 + (position - 6) // 6
 
 def normaliser_nom_salon(nom):
-    """Nettoie en profondeur le nom du salon pour éviter les erreurs d'émojis et de tirets Discord."""
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
 async def rafraichir_partout(guild):
     global id_message_principal, id_salon_principal
@@ -83,7 +78,7 @@ async def rafraichir_partout(guild):
     total_joueurs = len(classement_top)
     max_team = obtenir_equipe_et_salon(total_joueurs) if total_joueurs > 0 else 1
 
-    # 1. Nettoyage des rôles sur les membres hors classement
+    # 1. Nettoyage des rôles hors classement
     for member in guild.members:
         if member.id not in classement_top:
             roles_mauvais = [r for r in member.roles if r.name.startswith("Team ") or r.name == "Main Roster"]
@@ -91,7 +86,7 @@ async def rafraichir_partout(guild):
                 try: await member.remove_roles(*roles_mauvais)
                 except: pass
 
-    # 2. Création automatique des rôles et salons manquants
+    # 2. Création des rôles/salons manquants
     for num_team in range(1, max_team + 1):
         nom_role = obtenir_nom_role_team(num_team)
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
@@ -105,11 +100,10 @@ async def rafraichir_partout(guild):
             try: await guild.create_text_channel(name=nom_salon_stylise)
             except: pass
 
-    # 3. Mise à jour dynamique des rôles pour les joueurs du top
+    # 3. Rôles des joueurs du top
     for index, user_id in enumerate(classement_top):
         pos = index + 1
         team_cible = obtenir_equipe_et_salon(pos)
-        
         try:
             member = await guild.fetch_member(user_id)
         except discord.NotFound:
@@ -118,7 +112,6 @@ async def rafraichir_partout(guild):
         if member:
             nom_role_cible = obtenir_nom_role_team(team_cible)
             role_bon = discord.utils.get(guild.roles, name=nom_role_cible)
-            
             roles_mauvais = [r for r in member.roles if (r.name.startswith("Team ") or r.name == "Main Roster") and r != role_bon]
             if roles_mauvais: 
                 try: await member.remove_roles(*roles_mauvais)
@@ -126,7 +119,8 @@ async def rafraichir_partout(guild):
             if role_bon and role_bon not in member.roles: 
                 try: await member.add_roles(role_bon)
                 except: pass
-    # 4. Actualisation du message de Classement Général complet
+
+    # 4. Message de Classement Général complet
     salon_top = guild.get_channel(id_salon_principal)
     if salon_top:
         texte_top = "🏆 **CLASSEMENT GÉNÉRAL COMPLET** 🏆\n\n"
@@ -147,27 +141,23 @@ async def rafraichir_partout(guild):
             msg = await salon_top.send(content=texte_top, view=view)
             id_message_principal = msg.id
 
-    # 5. Nettoyage et affichage actualisé dans les salons de Teams respectifs
+    # 5. Affichage dans les salons d'équipes
     for num_team in range(1, max_team + 1):
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
         salon_team = discord.utils.find(lambda c: normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise), guild.channels)
         
         if salon_team:
-            try: 
-                await salon_team.purge(limit=50)
-            except Exception as e:
-                print(f"Impossible de purger le salon Team {num_team} : {e}")
+            try: await salon_team.purge(limit=50)
+            except: pass
             
             lignes = [f"**Top {i+1}** : <@{uid}>" for i, uid in enumerate(classement_top) if obtenir_equipe_et_salon(i+1) == num_team]
             titre_affichage = "MAIN ROSTER" if num_team == 1 else f"Team {num_team}"
-            
             try:
                 if lignes:
                     await salon_team.send(f"🏆 **Membres - {titre_affichage}** 🏆\n\n" + "\n".join(lignes))
                 else:
                     await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
-            except Exception as e:
-                print(f"Erreur d'envoi dans le salon Team {num_team} : {e}")
+            except: pass
 # --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
@@ -254,69 +244,74 @@ class VueControleTop(discord.ui.View):
         if not role_verif and not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ Accès refusé. Rôle ADMIN requis.", ephemeral=True)
             return
-
-        view = VueDataOptions()
-        await interaction.response.send_message(
-            content="🗄️ **Gestion de la Base de Données**\nCe panneau éphémère vous permet d'enregistrer et de restaurer la progression du classement général.", 
-            view=view, 
-            ephemeral=True
-        )
+        await interaction.response.send_message(content="🗄️ **Gestion de la Base de Données**", view=VueDataOptions(), ephemeral=True)
 
     @discord.ui.button(label="Liste des Commandes ❓", style=discord.ButtonStyle.success, custom_id="btn_help")
     async def bouton_aide(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
-            title="🤖 Guide des commandes du Bot de Classement",
-            description="Voici la liste des commandes disponibles pour gérer et consulter le classement.",
-            color=discord.Color.gold()
-        )
-        embed.add_field(
-            name="🛠️ Commandes Administrateur",
-            value=(
-                "`!setup` : Initialise le système dans le salon actuel (affiche le classement général).\n"
-                "`!add @membre` : Ajoute un joueur à la fin du classement.\n"
-                "`!addmany @m1 @m2...` : Ajoute plusieurs joueurs en même temps.\n"
-                "`!remove @membre` : Retire un joueur spécifique du classement.\n"
-                "`!tstart` : Lance la phase d'inscription pour un tournoi flash.\n"
-                "`!twin [Code_Match] @membre` : Valide le gagnant d'un match (Ex: `!twin Q1 @membre`)."
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🎛️ Panneau de Contrôle (Boutons)",
-            value=(
-                "📈 **Changer de place** : Décaler un joueur vers une autre position.\n"
-                "🔄 **Échanger 2 places** : Permuter les positions de deux joueurs.\n"
-                "❌ **Retirer du Top** : Supprimer un joueur via son numéro de Top.\n"
-                "🗄️ **DATA** : Panneau de sauvegarde sécurisé (Rôle Admin uniquement).\n"
-                "❓ **Liste des Commandes** : Affiche ce guide (visible uniquement par vous)."
-            ),
-            inline=False
-        )
-        embed.set_footer(text="Note : Les boutons de modification et les commandes sont réservés aux administrateurs.")
+        embed = discord.Embed(title="🤖 Guide des commandes", color=discord.Color.gold())
+        embed.add_field(name="🛠️ Admin", value="`!setup`, `!add @m`, `!addmany @m1...`, `!remove @m`, `!tstart`, `!twin`", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+# --- LOGIQUE DE SAUVEGARDE & RESTAURATION DATA ---
+class VueDataOptions(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    @discord.ui.button(label="ENREGISTRER 💾", style=discord.ButtonStyle.success)
+    async def btn_enregistrer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(FenetreNomSauvegarde())
+
+    @discord.ui.button(label="BASE DONNÉE 📂", style=discord.ButtonStyle.primary)
+    async def btn_base_donnee(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sauvegardes = charger_sauvegardes()
+        if not sauvegardes:
+            await interaction.response.send_message("ℹ️ Aucune sauvegarde.", ephemeral=True)
+            return
+        await interaction.response.send_message("📂 Sélectionnez une sauvegarde :", view=VueListeSauvegardes(sauvegardes), ephemeral=True)
+
+class FenetreNomSauvegarde(discord.ui.Modal, title="Nommer l'enregistrement"):
+    nom_save = discord.ui.TextInput(label="Nom de la sauvegarde", placeholder="Ex: Fin_Semaine_1")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global classement_top
+        nom = self.nom_save.value.strip().replace(" ", "_")
+        if not nom:
+            await interaction.response.send_message("❌ Nom invalide.", ephemeral=True)
+            return
+        sauvegardes = charger_sauvegardes()
+        sauvegardes[nom] = list(classement_top)
+        enregistrer_sauvegardes(sauvegardes)
+        await interaction.response.send_message(f"💾 Enregistré sous : `{nom}`", ephemeral=True)
+
+class VueListeSauvegardes(discord.ui.View):
+    def __init__(self, sauvegardes):
+        super().__init__(timeout=60)
+        options = [discord.SelectOption(label=nom, description=f"{len(liste)} joueurs", value=nom) for nom, liste in sauvegardes.items()]
+        self.add_item(MenuDeroulantSauvegardes(options))
+
+class MenuDeroulantSauvegardes(discord.ui.Select):
+    def __init__(self, options):
+        super().__init__(placeholder="Choisissez une sauvegarde...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        nom_selectionne = self.values[0]
+        await interaction.response.send_message(content=f"⚙️ Options pour `{nom_selectionne}`", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
+
 class VueActionSauvegarde(discord.ui.View):
     def __init__(self, nom_sauvegarde):
         super().__init__(timeout=60)
         self.nom_sauvegarde = nom_sauvegarde
 
-    @discord.ui.button(label="RESTAURER (Remplacer le Top) 🔄", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="RESTAURER 🔄", style=discord.ButtonStyle.danger)
     async def btn_restaurer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = VueConfirmationRestauration(self.nom_sauvegarde)
-        await interaction.response.send_message(
-            content=f"⚠️ **ATTENTION** : Êtes-vous sûr de vouloir charger `{self.nom_sauvegarde}` ? Cela écrasera définitivement la configuration actuelle du Top.", 
-            view=view, 
-            ephemeral=True
-        )
+        await interaction.response.send_message(content=f"⚠️ Charger `{self.nom_sauvegarde}` ? Écrase le Top actuel.", view=VueConfirmationRestauration(self.nom_sauvegarde), ephemeral=True)
 
-    @discord.ui.button(label="SUPPRIMER LA SAUVEGARDE 🗑️", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="SUPPRIMER 🗑️", style=discord.ButtonStyle.secondary)
     async def btn_supprimer_save(self, interaction: discord.Interaction, button: discord.ui.Button):
         sauvegardes = charger_sauvegardes()
         if self.nom_sauvegarde in sauvegardes:
             del sauvegardes[self.nom_sauvegarde]
             enregistrer_sauvegardes(sauvegardes)
-            await interaction.response.send_message(f"🗑️ L'enregistrement `{self.nom_sauvegarde}` a été supprimé définitivement de la base de données.", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Sauvegarde introuvable.", ephemeral=True)
+            await interaction.response.send_message(f"🗑️ `{self.nom_sauvegarde}` supprimé.", ephemeral=True)
 
 class VueConfirmationRestauration(discord.ui.View):
     def __init__(self, nom_sauvegarde):
@@ -327,18 +322,15 @@ class VueConfirmationRestauration(discord.ui.View):
     async def btn_oui(self, interaction: discord.Interaction, button: discord.ui.Button):
         global classement_top
         sauvegardes = charger_sauvegardes()
-        
         if self.nom_sauvegarde in sauvegardes:
             classement_top = list(sauvegardes[self.nom_sauvegarde])
-            await interaction.response.send_message(f"✅ **Restauration effectuée avec succès !** La configuration `{self.nom_sauvegarde}` est maintenant active.", ephemeral=True)
+            await interaction.response.send_message(f"✅ Configuration `{self.nom_sauvegarde}` active !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
-        else:
-            await interaction.response.send_message("❌ Échec : La sauvegarde a disparu.", ephemeral=True)
 
     @discord.ui.button(label="NON, ANNULER ❌", style=discord.ButtonStyle.secondary)
     async def btn_non(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("❌ Opération annulée. Aucun changement appliqué.", ephemeral=True)
-# --- LOGIQUE DU MODE TOURNOI FLASH (8 JOUEURS) ---
+        await interaction.response.send_message("❌ Annulé.", ephemeral=True)
+# --- LOGIQUE DU MODE TOURNOI FLASH ---
 tournoi_inscrits = []
 tournoi_etape = "ferme"
 tournoi_matchs = {}
@@ -349,67 +341,32 @@ id_salon_tournoi = None
 def generer_affichage_tournoi():
     global tournoi_etape, tournoi_matchs, tournoi_vainqueurs
     texte = "⚔️ ─── **TOURNOI FLASH AUTOMATIQUE** ─── ⚔️\n\n"
-    
     if tournoi_etape == "inscriptions":
-        texte += f"📌 **Statut : Inscriptions ouvertes !**\n"
-        texte += f"Places occupées : **{len(tournoi_inscrits)} / 8**\n\n"
-        if tournoi_inscrits:
-            texte += "📋 **Liste des participants :**\n"
-            for index, u_id in enumerate(tournoi_inscrits):
-                texte += f"{index + 1}. <@{u_id}>\n"
-        else:
-            texte += "*En attente de courageux guerriers... Clique sur le bouton ci-dessous !*"
+        texte += f"📌 **Inscriptions ouvertes : {len(tournoi_inscrits)} / 8**\n\n"
+        for index, u_id in enumerate(tournoi_inscrits): texte += f"{index + 1}. <@{u_id}>\n"
         return texte
-
     texte += "◽ **QUARTS DE FINALE** ◽\n"
     for m in range(1, 5):
         p1 = f"<@{tournoi_matchs[f'Q{m}'][0]}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 0 else "À définir"
         p2 = f"<@{tournoi_matchs[f'Q{m}'][1]}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 1 else "À définir"
         v = f"🏅 Vainqueur : <@{tournoi_vainqueurs[f'Q{m}']}>" if f'Q{m}' in tournoi_vainqueurs else "En attente..."
-        texte += f"🔹 **Match Q{m}** : {p1} **VS** {p2}\n   └─ {v}\n"
-    
-    texte += "\n◽ **DEMI-FINALES** ◽\n"
-    for m in range(1, 3):
-        p1 = f"<@{tournoi_matchs[f'D{m}'][0]}>" if f'D{m}' in tournoi_matchs and len(tournoi_matchs[f'D{m}']) > 0 else "En attente..."
-        p2 = f"<@{tournoi_matchs[f'D{m}'][1]}>" if f'D{m}' in tournoi_matchs and len(tournoi_matchs[f'D{m}']) > 1 else "En attente..."
-        v = f"🏅 Vainqueur : <@{tournoi_vainqueurs[f'D{m}']}>" if f'D{m}' in tournoi_vainqueurs else "En attente..."
-        texte += f"🔹 **Match D{m}** : {p1} **VS** {p2}\n   └─ {v}\n"
-
-    texte += "\n👑 **GRANDE FINALE** ◽\n"
-    p1 = f"<@{tournoi_matchs['F1'][0]}>" if 'F1' in tournoi_matchs and len(tournoi_matchs['F1']) > 0 else "En attente..."
-    p2 = f"<@{tournoi_matchs['F1'][1]}>" if 'F1' in tournoi_matchs and len(tournoi_matchs['F1']) > 1 else "En attente..."
-    if 'F1' in tournoi_vainqueurs:
-        texte += f"🏆 **Match F1** : {p1} **VS** {p2}\n   └─ 🎉 **CHAMPION : <@{tournoi_vainqueurs['F1']}>** 🎉\n"
-    else:
-        texte += f"🏆 **Match F1** : {p1} **VS** {p2}\n   └─ En attente du couronnement...\n"
+        texte += f"🔹 Match Q{m} : {p1} VS {p2}\n   └─ {v}\n"
     return texte
 
 class VueInscriptionTournoi(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="S'inscrire au Tournoi ⚔️", style=discord.ButtonStyle.success, custom_id="btn_join_tournoi")
+    def __init__(self): super().__init__(timeout=None)
+    @discord.ui.button(label="S'inscrire ⚔️", style=discord.ButtonStyle.success, custom_id="btn_join_tournoi")
     async def bouton_inscription(self, interaction: discord.Interaction, button: discord.ui.Button):
-        global tournoi_inscrits, tournoi_etape, tournoi_matchs, id_message_tournoi
-        if tournoi_etape != "inscriptions":
-            await interaction.response.send_message("❌ Les inscriptions sont fermées.", ephemeral=True)
-            return
-        if interaction.user.id in tournoi_inscrits:
-            await interaction.response.send_message("⚠️ Tu es déjà inscrit !", ephemeral=True)
-            return
-
+        global tournoi_inscrits, tournoi_etape, tournoi_matchs
+        if tournoi_etape != "inscriptions": return
+        if interaction.user.id in tournoi_inscrits: return
         tournoi_inscrits.append(interaction.user.id)
         if len(tournoi_inscrits) == 8:
             tournoi_etape = "quarts"
-            tournoi_matchs['Q1'] = [tournoi_inscrits[0], tournoi_inscrits[7]]
-            tournoi_matchs['Q2'] = [tournoi_inscrits[1], tournoi_inscrits[6]]
-            tournoi_matchs['Q3'] = [tournoi_inscrits[2], tournoi_inscrits[5]]
-            tournoi_matchs['Q4'] = [tournoi_inscrits[3], tournoi_inscrits[4]]
-            await interaction.response.send_message("🎉 Tu es le 8ème joueur ! Le tournoi se lance !", ephemeral=True)
+            for m in range(1, 5): tournoi_matchs[f'Q{m}'] = [tournoi_inscrits[(m-1)*2], tournoi_inscrits[(m-1)*2+1]]
             await interaction.message.edit(content=generer_affichage_tournoi(), view=None)
-        else:
-            await interaction.response.send_message("✅ Inscription validée !", ephemeral=True)
-            await interaction.message.edit(content=generer_affichage_tournoi(), view=self)
+        else: await interaction.message.edit(content=generer_affichage_tournoi(), view=self)
+        await interaction.response.defer()
 
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
@@ -424,9 +381,7 @@ async def initialiser_salon_top(ctx):
 @commands.has_permissions(administrator=True)
 async def ajouter_joueur(ctx, membre: discord.Member):
     global classement_top
-    if membre.id not in classement_top:
-        classement_top.append(membre.id)
-    await ctx.send(f"✅ {membre.mention} ajouté en fin de liste.", delete_after=3)
+    if membre.id not in classement_top: classement_top.append(membre.id)
     await ctx.message.delete()
     await rafraichir_partout(ctx.guild)
 
@@ -434,19 +389,8 @@ async def ajouter_joueur(ctx, membre: discord.Member):
 @commands.has_permissions(administrator=True)
 async def ajouter_plusieurs_joueurs(ctx, *membres: discord.Member):
     global classement_top
-    if not membres:
-        await ctx.send("❌ Veuillez mentionner au moins un joueur.", delete_after=5)
-        await ctx.message.delete()
-        return
-    membres_ajoutes = []
     for membre in membres:
-        if membre.id not in classement_top:
-            classement_top.append(membre.id)
-            membres_ajoutes.append(membre.mention)
-    if membres_ajoutes:
-        await ctx.send(f"✅ Joueurs ajoutés : {', '.join(membres_ajoutes)}", delete_after=5)
-    else:
-        await ctx.send("ℹ️ Tous les joueurs sont déjà dans le classement.", delete_after=5)
+        if membre.id not in classement_top: classement_top.append(membre.id)
     await ctx.message.delete()
     await rafraichir_partout(ctx.guild)
 
@@ -454,54 +398,28 @@ async def ajouter_plusieurs_joueurs(ctx, *membres: discord.Member):
 @commands.has_permissions(administrator=True)
 async def supprimer_joueur_txt(ctx, membre: discord.Member):
     global classement_top
-    if membre.id in classement_top:
-        classement_top.remove(membre.id)
-        await ctx.send(f"❌ {membre.mention} retiré.", delete_after=3)
-        await ctx.message.delete()
-        await rafraichir_partout(ctx.guild)
-    else:
-        await ctx.send("Ce joueur n'est pas dans le top.", delete_after=3)
+    if membre.id in classement_top: classement_top.remove(membre.id)
+    await ctx.message.delete()
+    await rafraichir_partout(ctx.guild)
 
 @bot.command(name="tstart")
 @commands.has_permissions(administrator=True)
 async def lancer_inscriptions_tournoi(ctx):
     global tournoi_inscrits, tournoi_etape, tournoi_matchs, tournoi_vainqueurs, id_message_tournoi, id_salon_tournoi
-    tournoi_inscrits = []
-    tournoi_matchs = {}
-    tournoi_vainqueurs = {}
+    tournoi_inscrits, tournoi_matchs, tournoi_vainqueurs = [], {}, {}
     tournoi_etape = "inscriptions"
     id_salon_tournoi = ctx.channel.id
     await ctx.message.delete()
-    view = VueInscriptionTournoi()
-    msg = await ctx.send(content=generer_affichage_tournoi(), view=view)
+    msg = await ctx.send(content=generer_affichage_tournoi(), view=VueInscriptionTournoi())
     id_message_tournoi = msg.id
 
 @bot.command(name="twin")
 @commands.has_permissions(administrator=True)
 async def valider_gagnant_match(ctx, code_match: str, membre: discord.Member):
-    global tournoi_etape, tournoi_matchs, tournoi_vainqueurs, id_message_tournoi, id_salon_tournoi
-    if not id_message_tournoi or not id_salon_tournoi:
-        await ctx.send("❌ Aucun tournoi actif.", delete_after=3)
-        return
+    global tournoi_matchs, tournoi_vainqueurs, id_message_tournoi, id_salon_tournoi
     code_match = code_match.upper()
-    if code_match not in tournoi_matchs:
-        await ctx.send("❌ Code match invalide (Q1, Q2, D1, F1...).", delete_after=5)
-        return
-    if membre.id not in tournoi_matchs[code_match]:
-        await ctx.send("❌ Ce joueur ne fait pas partie de ce match.", delete_after=5)
-        return
-
     tournoi_vainqueurs[code_match] = membre.id
     await ctx.message.delete()
-
-    if tournoi_etape == "quarts" and len([k for k in tournoi_vainqueurs if k.startswith('Q')]) == 4:
-        tournoi_etape = "demis"
-        tournoi_matchs['D1'] = [tournoi_vainqueurs['Q1'], tournoi_vainqueurs['Q2']]
-        tournoi_matchs['D2'] = [tournoi_vainqueurs['Q3'], tournoi_vainqueurs['Q4']]
-    elif tournoi_etape == "demis" and len([k for k in tournoi_vainqueurs if k.startswith('D')]) == 2:
-        tournoi_etape = "finale"
-        tournoi_matchs['F1'] = [tournoi_vainqueurs['D1'], tournoi_vainqueurs['D2']]
-
     salon = bot.get_channel(id_salon_tournoi)
     if salon:
         try:
