@@ -275,10 +275,10 @@ class MenuDeroulantMotif(discord.ui.Select):
         guild = interaction.guild
         
         # RECHERCHE OU CRÉATION AUTOMATIQUE DE LA CATÉGORIE DU SERVEUR
-        categorie = discord.utils.find(lambda c: c.name.upper() == "🎫 TICKETS" and isinstance(c, discord.CategoryChannel), guild.channels)
+        categorie = discord.utils.find(lambda c: c.name.upper() == "🎫 𝙏𝙄𝘾𝙆𝙀𝙏" and isinstance(c, discord.CategoryChannel), guild.channels)
         if not categorie:
             try:
-                categorie = await guild.create_category(name="🎫 TICKETS")
+                categorie = await guild.create_category(name="🎫 𝙏𝙄𝘾𝙆𝙀𝙏")
             except Exception as e:
                 await interaction.response.send_message(f"❌ Impossible de créer la catégorie automatique : `{e}`", ephemeral=True)
                 return
