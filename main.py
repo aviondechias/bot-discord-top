@@ -32,6 +32,7 @@ id_salon_principal = None
 
 ROLE_ADMIN_ID = 1529373902969770094
 FICHIER_SAUVEGARDE = "sauvegardes_top.json"
+CATEGORIE_TICKET_ID = 1544890174981414993
 
 def charger_sauvegardes():
     if not os.path.exists(FICHIER_SAUVEGARDE):
@@ -86,7 +87,7 @@ async def rafraichir_partout(guild):
                 try: await member.remove_roles(*roles_mauvais)
                 except: pass
 
-    # 2. Création des rôles/salons manquants
+    # 2. Création automatique des rôles/salons
     for num_team in range(1, max_team + 1):
         nom_role = obtenir_nom_role_team(num_team)
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
@@ -100,7 +101,7 @@ async def rafraichir_partout(guild):
             try: await guild.create_text_channel(name=nom_salon_stylise)
             except: pass
 
-    # 3. Rôles des joueurs du top
+    # 3. Rôles dynamiques des joueurs du classement
     for index, user_id in enumerate(classement_top):
         pos = index + 1
         team_cible = obtenir_equipe_et_salon(pos)
@@ -141,7 +142,7 @@ async def rafraichir_partout(guild):
             msg = await salon_top.send(content=texte_top, view=view)
             id_message_principal = msg.id
 
-    # 5. Affichage dans les salons d'équipes
+    # 5. Affichage dans les salons d'équipes respectifs
     for num_team in range(1, max_team + 1):
         nom_salon_stylise = obtenir_nom_salon_team(num_team)
         salon_team = discord.utils.find(lambda c: normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise), guild.channels)
@@ -158,6 +159,91 @@ async def rafraichir_partout(guild):
                 else:
                     await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
             except: pass
+
+# --- LOGIQUE DE SAUVEGARDE & RESTAURATION DATA ---
+class VueDataOptions(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    @discord.ui.button(label="ENREGISTRER 💾", style=discord.ButtonStyle.success)
+    async def btn_enregistrer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(FenetreNomSauvegarde())
+
+    @discord.ui.button(label="BASE DONNÉE 📂", style=discord.ButtonStyle.primary)
+    async def btn_base_donnee(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sauvegardes = charger_sauvegardes()
+        if not sauvegardes:
+            await interaction.response.send_message("ℹ️ Aucune sauvegarde enregistrée pour le moment.", ephemeral=True)
+            return
+        await interaction.response.send_message("📂 Sélectionnez une sauvegarde dans le menu :", view=VueListeSauvegardes(sauvegardes), ephemeral=True)
+
+class FenetreNomSauvegarde(discord.ui.Modal, title="Nommer l'enregistrement"):
+    nom_save = discord.ui.TextInput(label="Nom de la sauvegarde", placeholder="Ex: Fin_Semaine_1")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global classement_top
+        nom = self.nom_save.value.strip().replace(" ", "_")
+        if not nom:
+            await interaction.response.send_message("❌ Nom invalide.", ephemeral=True)
+            return
+        sauvegardes = charger_sauvegardes()
+        sauvegardes[nom] = list(classement_top)
+        enregistrer_sauvegardes(sauvegardes)
+        await interaction.response.send_message(f"💾 Enregistré avec succès sous le nom : `{nom}`", ephemeral=True)
+
+class VueListeSauvegardes(discord.ui.View):
+    def __init__(self, sauvegardes):
+        super().__init__(timeout=60)
+        options = [discord.SelectOption(label=nom, description=f"{len(liste)} joueurs", value=nom) for nom, liste in sauvegardes.items()]
+        self.add_item(MenuDeroulantSauvegardes(options))
+
+class MenuDeroulantSauvegardes(discord.ui.Select):
+    def __init__(self, options):
+        super().__init__(placeholder="Choisissez une sauvegarde...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        nom_selectionne = self.values[0]
+        await interaction.response.send_message(content=f"⚙️ Options pour la sauvegarde `{nom_selectionne}` :", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
+
+class VueActionSauvegarde(discord.ui.View):
+    def __init__(self, nom_sauvegarde):
+        super().__init__(timeout=60)
+        self.nom_sauvegarde = nom_sauvegarde
+
+    @discord.ui.button(label="RESTAURER 🔄", style=discord.ButtonStyle.danger)
+    async def btn_restaurer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(content=f"⚠️ Êtes-vous sûr de vouloir charger `{self.nom_sauvegarde}` ? Cela écrasera le Top actuel.", view=VueConfirmationRestauration(self.nom_sauvegarde), ephemeral=True)
+
+    @discord.ui.button(label="SUPPRIMER 🗑️", style=discord.ButtonStyle.secondary)
+    async def btn_supprimer_save(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sauvegardes = charger_sauvegardes()
+        if self.nom_sauvegarde in sauvegardes:
+            del sauvegardes[self.nom_sauvegarde]
+            enregistrer_sauvegardes(sauvegardes)
+            await interaction.response.send_message(f"🗑️ La sauvegarde `{self.nom_sauvegarde}` a été supprimée.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Sauvegarde introuvable.", ephemeral=True)
+
+class VueConfirmationRestauration(discord.ui.View):
+    def __init__(self, nom_sauvegarde):
+        super().__init__(timeout=30)
+        self.nom_sauvegarde = nom_sauvegarde
+
+    @discord.ui.button(label="OUI, ACCEPTER 🛠️", style=discord.ButtonStyle.danger)
+    async def btn_oui(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global classement_top
+        sauvegardes = charger_sauvegardes()
+        if self.nom_sauvegarde in sauvegardes:
+            classement_top = list(sauvegardes[self.nom_sauvegarde])
+            await interaction.response.send_message(f"✅ Configuration `{self.nom_sauvegarde}` chargée avec succès !", ephemeral=True)
+            await rafraichir_partout(interaction.guild)
+        else:
+            await interaction.response.send_message("❌ Échec : La sauvegarde n'existe plus.", ephemeral=True)
+
+    @discord.ui.button(label="NON, ANNULER ❌", style=discord.ButtonStyle.secondary)
+    async def btn_non(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("❌ Opération annulée.", ephemeral=True)
+
 # --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
@@ -244,92 +330,14 @@ class VueControleTop(discord.ui.View):
         if not role_verif and not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ Accès refusé. Rôle ADMIN requis.", ephemeral=True)
             return
-        await interaction.response.send_message(content="🗄️ **Gestion de la Base de Données**", view=VueDataOptions(), ephemeral=True)
+        await interaction.response.send_message(content="🗄️ **Gestion de la Base de Données**\nCe menu vous permet d'enregistrer la progression ou d'ouvrir votre historique.", view=VueDataOptions(), ephemeral=True)
 
     @discord.ui.button(label="Liste des Commandes ❓", style=discord.ButtonStyle.success, custom_id="btn_help")
     async def bouton_aide(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="🤖 Guide des commandes", color=discord.Color.gold())
-        embed.add_field(name="🛠️ Admin", value="`!setup`, `!add @m`, `!addmany @m1...`, `!remove @m`, `!tstart`, `!twin`", inline=False)
+        embed.add_field(name="🛠️ Admin", value="`!setup`, `!add @m`, `!addmany @m1...`, `!remove @m`, `!tstart`, `!twin`, `!setup_ticket`", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-# --- LOGIQUE DE SAUVEGARDE & RESTAURATION DATA ---
-class VueDataOptions(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=60)
 
-    @discord.ui.button(label="ENREGISTRER 💾", style=discord.ButtonStyle.success)
-    async def btn_enregistrer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(FenetreNomSauvegarde())
-
-    @discord.ui.button(label="BASE DONNÉE 📂", style=discord.ButtonStyle.primary)
-    async def btn_base_donnee(self, interaction: discord.Interaction, button: discord.ui.Button):
-        sauvegardes = charger_sauvegardes()
-        if not sauvegardes:
-            await interaction.response.send_message("ℹ️ Aucune sauvegarde.", ephemeral=True)
-            return
-        await interaction.response.send_message("📂 Sélectionnez une sauvegarde :", view=VueListeSauvegardes(sauvegardes), ephemeral=True)
-
-class FenetreNomSauvegarde(discord.ui.Modal, title="Nommer l'enregistrement"):
-    nom_save = discord.ui.TextInput(label="Nom de la sauvegarde", placeholder="Ex: Fin_Semaine_1")
-
-    async def on_submit(self, interaction: discord.Interaction):
-        global classement_top
-        nom = self.nom_save.value.strip().replace(" ", "_")
-        if not nom:
-            await interaction.response.send_message("❌ Nom invalide.", ephemeral=True)
-            return
-        sauvegardes = charger_sauvegardes()
-        sauvegardes[nom] = list(classement_top)
-        enregistrer_sauvegardes(sauvegardes)
-        await interaction.response.send_message(f"💾 Enregistré sous : `{nom}`", ephemeral=True)
-
-class VueListeSauvegardes(discord.ui.View):
-    def __init__(self, sauvegardes):
-        super().__init__(timeout=60)
-        options = [discord.SelectOption(label=nom, description=f"{len(liste)} joueurs", value=nom) for nom, liste in sauvegardes.items()]
-        self.add_item(MenuDeroulantSauvegardes(options))
-
-class MenuDeroulantSauvegardes(discord.ui.Select):
-    def __init__(self, options):
-        super().__init__(placeholder="Choisissez une sauvegarde...", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        nom_selectionne = self.values[0]
-        await interaction.response.send_message(content=f"⚙️ Options pour `{nom_selectionne}`", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
-
-class VueActionSauvegarde(discord.ui.View):
-    def __init__(self, nom_sauvegarde):
-        super().__init__(timeout=60)
-        self.nom_sauvegarde = nom_sauvegarde
-
-    @discord.ui.button(label="RESTAURER 🔄", style=discord.ButtonStyle.danger)
-    async def btn_restaurer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(content=f"⚠️ Charger `{self.nom_sauvegarde}` ? Écrase le Top actuel.", view=VueConfirmationRestauration(self.nom_sauvegarde), ephemeral=True)
-
-    @discord.ui.button(label="SUPPRIMER 🗑️", style=discord.ButtonStyle.secondary)
-    async def btn_supprimer_save(self, interaction: discord.Interaction, button: discord.ui.Button):
-        sauvegardes = charger_sauvegardes()
-        if self.nom_sauvegarde in sauvegardes:
-            del sauvegardes[self.nom_sauvegarde]
-            enregistrer_sauvegardes(sauvegardes)
-            await interaction.response.send_message(f"🗑️ `{self.nom_sauvegarde}` supprimé.", ephemeral=True)
-
-class VueConfirmationRestauration(discord.ui.View):
-    def __init__(self, nom_sauvegarde):
-        super().__init__(timeout=30)
-        self.nom_sauvegarde = nom_sauvegarde
-
-    @discord.ui.button(label="OUI, ACCEPTER 🛠️", style=discord.ButtonStyle.danger)
-    async def btn_oui(self, interaction: discord.Interaction, button: discord.ui.Button):
-        global classement_top
-        sauvegardes = charger_sauvegardes()
-        if self.nom_sauvegarde in sauvegardes:
-            classement_top = list(sauvegardes[self.nom_sauvegarde])
-            await interaction.response.send_message(f"✅ Configuration `{self.nom_sauvegarde}` active !", ephemeral=True)
-            await rafraichir_partout(interaction.guild)
-
-    @discord.ui.button(label="NON, ANNULER ❌", style=discord.ButtonStyle.secondary)
-    async def btn_non(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("❌ Annulé.", ephemeral=True)
 # --- LOGIQUE DU MODE TOURNOI FLASH ---
 tournoi_inscrits = []
 tournoi_etape = "ferme"
@@ -347,8 +355,8 @@ def generer_affichage_tournoi():
         return texte
     texte += "◽ **QUARTS DE FINALE** ◽\n"
     for m in range(1, 5):
-        p1 = f"<@{tournoi_matchs[f'Q{m}'][0]}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 0 else "À définir"
-        p2 = f"<@{tournoi_matchs[f'Q{m}'][1]}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 1 else "À définir"
+        p1 = f"<@{tournoi_matchs[f'Q{m}']}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 0 else "À définir"
+        p2 = f"<@{tournoi_matchs[f'Q{m}']}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 1 else "À définir"
         v = f"🏅 Vainqueur : <@{tournoi_vainqueurs[f'Q{m}']}>" if f'Q{m}' in tournoi_vainqueurs else "En attente..."
         texte += f"🔹 Match Q{m} : {p1} VS {p2}\n   └─ {v}\n"
     return texte
@@ -427,8 +435,18 @@ async def valider_gagnant_match(ctx, code_match: str, membre: discord.Member):
             await msg.edit(content=generer_affichage_tournoi())
         except: pass
 
+@bot.command(name="setup_ticket")
+@commands.has_permissions(administrator=True)
+async def envoyer_panneau_ticket(ctx):
+    await ctx.message.delete()
+    embed = discord.Embed(title="🎫 Support & Recrutement - Système de Tickets", description="Cliquez ci-dessous pour ouvrir un salon d'assistance privé.", color=discord.Color.green())
+    await ctx.send(embed=embed, view=VueCreationTicket())
+
 @bot.event
 async def on_ready():
+    bot.add_view(VueControleTop())
+    bot.add_view(VueCreationTicket())
+    bot.add_view(VueFermetureTicket())
     print(f"Bot en ligne : {bot.user.name}")
 
 keep_alive()
