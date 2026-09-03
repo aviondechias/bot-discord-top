@@ -267,9 +267,10 @@ class MenuDeroulantMotif(discord.ui.Select):
     def __init__(self, options):
         super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
 
-    async def callback(self, interaction: discord.Interaction):
-        motif_selectionne = self.values[0]
+        async def callback(self, interaction: discord.Interaction):
+        motif_selectionne = self.values[0] # Extraction de l'élément texte de la liste
         guild = interaction.guild
+
         
         # Récupération sécurisée de la catégorie
         categorie = guild.get_channel(CATEGORIE_TICKET_ID)
@@ -430,9 +431,21 @@ async def valider_gagnant_match(ctx, code_match: str, membre: discord.Member):
 @bot.command(name="setup_ticket")
 @commands.has_permissions(administrator=True)
 async def envoyer_panneau_ticket(ctx):
+    """Envoie de manière garantie le panneau des tickets avec sa vue associée."""
     await ctx.message.delete()
-    embed = discord.Embed(title="🎫 Support & Recrutement - Système de Tickets", description="Cliquez ci-dessous pour ouvrir un salon d'assistance privé.", color=discord.Color.green())
-    await ctx.send(embed=embed, view=VueCreationTicket())
+    embed = discord.Embed(
+        title="🎫 Support & Recrutement - Système de Tickets", 
+        description="Cliquez ci-dessous pour ouvrir un salon d'assistance privé et choisir votre motif.", 
+        color=discord.Color.green()
+    )
+    # Import local de secours de la vue pour forcer Python à la trouver
+    try:
+        from __main__ import VueCreationTicket
+        view_ticket = VueCreationTicket()
+    except:
+        view_ticket = VueCreationTicket()
+        
+    await ctx.send(embed=embed, view=view_ticket)
 
 @bot.event
 async def on_ready():
