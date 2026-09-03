@@ -6,7 +6,7 @@ from threading import Thread
 import os
 import json
 
-# --- SERVEUR WEB KEEP-ALIVE ---
+# --- KEEP-ALIVE WEB SERVER ---
 app = Flask('')
 
 @app.route('/')
@@ -19,13 +19,13 @@ def run_web_server():
 def keep_alive():
     Thread(target=run_web_server).start()
 
-# --- CONFIGURATION BOT ---
+# --- BOT CONFIGURATION ---
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Stockage des données en mémoire
+# Memory Storage variables
 classement_top = []
 id_message_principal = None
 id_salon_principal = None
@@ -72,95 +72,8 @@ def obtenir_equipe_et_salon(position):
 
 def normaliser_nom_salon(nom):
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
-async def rafraichir_partout(guild):
-    global id_message_principal, id_salon_principal
-    if not id_salon_principal: return
 
-    total_joueurs = len(classement_top)
-    max_team = obtenir_equipe_et_salon(total_joueurs) if total_joueurs > 0 else 1
-
-    # 1. Nettoyage des rôles hors classement
-    for member in guild.members:
-        if member.id not in classement_top:
-            roles_mauvais = [r for r in member.roles if r.name.startswith("Team ") or r.name == "Main Roster"]
-            if roles_mauvais: 
-                try: await member.remove_roles(*roles_mauvais)
-                except: pass
-
-    # 2. Création automatique des rôles/salons
-    for num_team in range(1, max_team + 1):
-        nom_role = obtenir_nom_role_team(num_team)
-        nom_salon_stylise = obtenir_nom_salon_team(num_team)
-
-        if not discord.utils.get(guild.roles, name=nom_role):
-            try: await guild.create_role(name=nom_role)
-            except: pass
-            
-        salon_existe = any(normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise) for c in guild.channels)
-        if not salon_existe:
-            try: await guild.create_text_channel(name=nom_salon_stylise)
-            except: pass
-
-    # 3. Rôles dynamiques des joueurs du classement
-    for index, user_id in enumerate(classement_top):
-        pos = index + 1
-        team_cible = obtenir_equipe_et_salon(pos)
-        try:
-            member = await guild.fetch_member(user_id)
-        except discord.NotFound:
-            member = None
-
-        if member:
-            nom_role_cible = obtenir_nom_role_team(team_cible)
-            role_bon = discord.utils.get(guild.roles, name=nom_role_cible)
-            roles_mauvais = [r for r in member.roles if (r.name.startswith("Team ") or r.name == "Main Roster") and r != role_bon]
-            if roles_mauvais: 
-                try: await member.remove_roles(*roles_mauvais)
-                except: pass
-            if role_bon and role_bon not in member.roles: 
-                try: await member.add_roles(role_bon)
-                except: pass
-
-    # 4. Message de Classement Général complet
-    salon_top = guild.get_channel(id_salon_principal)
-    if salon_top:
-        texte_top = "🏆 **CLASSEMENT GÉNÉRAL COMPLET** 🏆\n\n"
-        if not classement_top:
-            texte_top += "*Aucun joueur dans le top pour le moment.*"
-        for index, u_id in enumerate(classement_top):
-            texte_top += f"**Top {index + 1}** : <@{u_id}>\n"
-        
-        view = VueControleTop()
-        if id_message_principal:
-            try:
-                msg = await salon_top.fetch_message(id_message_principal)
-                await msg.edit(content=texte_top, view=view)
-            except discord.NotFound:
-                msg = await salon_top.send(content=texte_top, view=view)
-                id_message_principal = msg.id
-        else:
-            msg = await salon_top.send(content=texte_top, view=view)
-            id_message_principal = msg.id
-
-    # 5. Affichage dans les salons d'équipes respectifs
-    for num_team in range(1, max_team + 1):
-        nom_salon_stylise = obtenir_nom_salon_team(num_team)
-        salon_team = discord.utils.find(lambda c: normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise), guild.channels)
-        
-        if salon_team:
-            try: await salon_team.purge(limit=50)
-            except: pass
-            
-            lignes = [f"**Top {i+1}** : <@{uid}>" for i, uid in enumerate(classement_top) if obtenir_equipe_et_salon(i+1) == num_team]
-            titre_affichage = "MAIN ROSTER" if num_team == 1 else f"Team {num_team}"
-            try:
-                if lignes:
-                    await salon_team.send(f"🏆 **Membres - {titre_affichage}** 🏆\n\n" + "\n".join(lignes))
-                else:
-                    await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
-            except: pass
-
-# --- LOGIQUE DE SAUVEGARDE & RESTAURATION DATA ---
+# --- DATABASE BACKUP & RESTORE LOGIC (DATA) ---
 class VueDataOptions(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
@@ -173,9 +86,9 @@ class VueDataOptions(discord.ui.View):
     async def btn_base_donnee(self, interaction: discord.Interaction, button: discord.ui.Button):
         sauvegardes = charger_sauvegardes()
         if not sauvegardes:
-            await interaction.response.send_message("ℹ️ Aucune sauvegarde enregistrée pour le moment.", ephemeral=True)
+            await interaction.response.send_message("ℹ️ Aucune sauvegarde enregistrée.", ephemeral=True)
             return
-        await interaction.response.send_message("📂 Sélectionnez une sauvegarde dans le menu :", view=VueListeSauvegardes(sauvegardes), ephemeral=True)
+        await interaction.response.send_message("📂 Sélectionnez une sauvegarde :", view=VueListeSauvegardes(sauvegardes), ephemeral=True)
 
 class FenetreNomSauvegarde(discord.ui.Modal, title="Nommer l'enregistrement"):
     nom_save = discord.ui.TextInput(label="Nom de la sauvegarde", placeholder="Ex: Fin_Semaine_1")
@@ -189,7 +102,7 @@ class FenetreNomSauvegarde(discord.ui.Modal, title="Nommer l'enregistrement"):
         sauvegardes = charger_sauvegardes()
         sauvegardes[nom] = list(classement_top)
         enregistrer_sauvegardes(sauvegardes)
-        await interaction.response.send_message(f"💾 Enregistré avec succès sous le nom : `{nom}`", ephemeral=True)
+        await interaction.response.send_message(f"💾 Enregistré sous : `{nom}`", ephemeral=True)
 
 class VueListeSauvegardes(discord.ui.View):
     def __init__(self, sauvegardes):
@@ -203,7 +116,7 @@ class MenuDeroulantSauvegardes(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         nom_selectionne = self.values[0]
-        await interaction.response.send_message(content=f"⚙️ Options pour la sauvegarde `{nom_selectionne}` :", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
+        await interaction.response.send_message(content=f"⚙️ Options pour `{nom_selectionne}`", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
 
 class VueActionSauvegarde(discord.ui.View):
     def __init__(self, nom_sauvegarde):
@@ -212,7 +125,7 @@ class VueActionSauvegarde(discord.ui.View):
 
     @discord.ui.button(label="RESTAURER 🔄", style=discord.ButtonStyle.danger)
     async def btn_restaurer(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(content=f"⚠️ Êtes-vous sûr de vouloir charger `{self.nom_sauvegarde}` ? Cela écrasera le Top actuel.", view=VueConfirmationRestauration(self.nom_sauvegarde), ephemeral=True)
+        await interaction.response.send_message(content=f"⚠️ Charger `{self.nom_sauvegarde}` ? Écrase le Top actuel.", view=VueConfirmationRestauration(self.nom_sauvegarde), ephemeral=True)
 
     @discord.ui.button(label="SUPPRIMER 🗑️", style=discord.ButtonStyle.secondary)
     async def btn_supprimer_save(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -220,9 +133,7 @@ class VueActionSauvegarde(discord.ui.View):
         if self.nom_sauvegarde in sauvegardes:
             del sauvegardes[self.nom_sauvegarde]
             enregistrer_sauvegardes(sauvegardes)
-            await interaction.response.send_message(f"🗑️ La sauvegarde `{self.nom_sauvegarde}` a été supprimée.", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Sauvegarde introuvable.", ephemeral=True)
+            await interaction.response.send_message(f"🗑️ `{self.nom_sauvegarde}` supprimé.", ephemeral=True)
 
 class VueConfirmationRestauration(discord.ui.View):
     def __init__(self, nom_sauvegarde):
@@ -235,16 +146,109 @@ class VueConfirmationRestauration(discord.ui.View):
         sauvegardes = charger_sauvegardes()
         if self.nom_sauvegarde in sauvegardes:
             classement_top = list(sauvegardes[self.nom_sauvegarde])
-            await interaction.response.send_message(f"✅ Configuration `{self.nom_sauvegarde}` chargée avec succès !", ephemeral=True)
+            await interaction.response.send_message(f"✅ Configuration `{self.nom_sauvegarde}` active !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         else:
-            await interaction.response.send_message("❌ Échec : La sauvegarde n'existe plus.", ephemeral=True)
+            await interaction.response.send_message("❌ Sauvegarde introuvable.", ephemeral=True)
 
     @discord.ui.button(label="NON, ANNULER ❌", style=discord.ButtonStyle.secondary)
     async def btn_non(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("❌ Opération annulée.", ephemeral=True)
+        await interaction.response.send_message("❌ Annulé.", ephemeral=True)
 
-# --- SYSTÈME DE TICKETS AVEC CHOIX DU MOTIF (CORRIGÉ) ---
+# --- MAIN LEADERBOARD CONTROL PANEL & MODALS ---
+class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
+    pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
+    pos_arrivee = discord.ui.TextInput(label="Sa nouvelle position voulue", placeholder="Ex: 2")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global classement_top
+        try:
+            p_dep = int(self.pos_depart.value) - 1
+            p_arr = int(self.pos_arrivee.value) - 1
+            if p_dep < 0 or p_arr < 0 or p_dep >= len(classement_top) or p_arr >= len(classement_top):
+                await interaction.response.send_message("❌ Positions invalides.", ephemeral=True)
+                return
+            joueur_id = classement_top.pop(p_dep)
+            classement_top.insert(p_arr, joueur_id)
+            await interaction.response.send_message("📈 Déplacement effectué !", ephemeral=True)
+            await rafraichir_partout(interaction.guild)
+        except ValueError:
+            await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
+
+class FenetreEchange(discord.ui.Modal, title="Échanger 2 places (Permuter)"):
+    pos1 = discord.ui.TextInput(label="Position du 1er joueur", placeholder="Ex: 2")
+    pos2 = discord.ui.TextInput(label="Position du 2ème joueur", placeholder="Ex: 5")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global classement_top
+        try:
+            p1 = int(self.pos1.value) - 1
+            p2 = int(self.pos2.value) - 1
+            if p1 < 0 or p2 < 0 or p1 >= len(classement_top) or p2 >= len(classement_top):
+                await interaction.response.send_message("❌ Positions invalides.", ephemeral=True)
+                return
+            classement_top[p1], classement_top[p2] = classement_top[p2], classement_top[p1]
+            await interaction.response.send_message("🔄 Échange effectué !", ephemeral=True)
+            await rafraichir_partout(interaction.guild)
+        except ValueError:
+            await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
+
+class FenetreSuppression(discord.ui.Modal, title="Retirer un joueur du Top"):
+    pos_suppr = discord.ui.TextInput(label="Position du joueur à supprimer", placeholder="Ex: 3")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global classement_top
+        try:
+            p = int(self.pos_suppr.value) - 1
+            if p < 0 or p >= len(classement_top):
+                await interaction.response.send_message("❌ Position invalide.", ephemeral=True)
+                return
+            classement_top.pop(p)
+            await interaction.response.send_message("❌ Joueur retiré avec succès !", ephemeral=True)
+            await rafraichir_partout(interaction.guild)
+        except ValueError:
+            await interaction.response.send_message("❌ Veuillez entrer un nombre valide.", ephemeral=True)
+
+class VueControleTop(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Changer de place 📈", style=discord.ButtonStyle.primary, custom_id="btn_deplace")
+    async def bouton_deplace(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Tu dois être admin.", ephemeral=True)
+            return
+        await interaction.response.send_modal(FenetreDeplacement())
+
+    @discord.ui.button(label="Échanger 2 places 🔄", style=discord.ButtonStyle.secondary, custom_id="btn_echange")
+    async def bouton_echange(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Tu dois être admin.", ephemeral=True)
+            return
+        await interaction.response.send_modal(FenetreEchange())
+
+    @discord.ui.button(label="Retirer du Top ❌", style=discord.ButtonStyle.danger, custom_id="btn_suppr")
+    async def bouton_supprime(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Tu dois être admin.", ephemeral=True)
+            return
+        await interaction.response.send_modal(FenetreSuppression())
+
+    @discord.ui.button(label="DATA 🗄️", style=discord.ButtonStyle.danger, custom_id="btn_data_panel")
+    async def bouton_data_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role_verif = discord.utils.get(interaction.user.roles, id=ROLE_ADMIN_ID)
+        if not role_verif and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Accès refusé. Rôle ADMIN requis.", ephemeral=True)
+            return
+        await interaction.response.send_message(content="🗄️ **Gestion de la Base de Données**", view=VueDataOptions(), ephemeral=True)
+
+    @discord.ui.button(label="Liste des Commandes ❓", style=discord.ButtonStyle.success, custom_id="btn_help")
+    async def bouton_aide(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(title="🤖 Guide des commandes", color=discord.Color.gold())
+        embed.add_field(name="🛠️ Commandes Admin", value="`!setup`, `!add @membre`, `!addmany @m1 @m2...`, `!remove @membre`, `!tstart`, `!twin`, `!setup_ticket`", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# --- SECURE TICKET SYSTEM (OPEN TO ALL MEMBERS) ---
 class VueCreationTicket(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -267,55 +271,41 @@ class MenuDeroulantMotif(discord.ui.Select):
     def __init__(self, options):
         super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
 
-        async def callback(self, interaction: discord.Interaction):
-        motif_selectionne = self.values[0] # Extraction de l'élément texte de la liste
+    async def callback(self, interaction: discord.Interaction):
+        motif_selectionne = self.values[0] # Properly extracts text string from dropdown array selection
         guild = interaction.guild
-
-        
-        # Récupération sécurisée de la catégorie
         categorie = guild.get_channel(CATEGORIE_TICKET_ID)
+
         if not categorie or not isinstance(categorie, discord.CategoryChannel):
-            await interaction.response.send_message("❌ Erreur : La catégorie des tickets est introuvable sur le serveur.", ephemeral=True)
+            await interaction.response.send_message("❌ Catégorie introuvable ou mal configurée.", ephemeral=True)
             return
 
-        # Récupération de l'objet membre complet pour l'auteur de l'interaction
         membre_createur = interaction.user
-        if isinstance(membre_createur, discord.User):
-            try:
-                membre_createur = await guild.fetch_member(interaction.user.id)
-            except:
-                pass
-
-        # Configuration des permissions avec des structures d'objets Discord valides
+        
+        # Enforces private channel viewing restrictions (Hidden from @everyone)
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
             membre_createur: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, view_channel=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
         }
-
-        # Injection sécurisée du rôle Admin s'il existe
+        
+        # Grants explicit view/chat permission to designated Admin role ID
         role_admin = guild.get_role(ROLE_ADMIN_ID)
-        if role_admin: 
-            overwrites[role_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
+        if role_admin: overwrites[role_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
 
         nom_salon = f"🎫-{motif_selectionne.lower().replace(' ', '-')}-{interaction.user.name}"
-        
         try:
-            # Création du salon textuel privé
             salon_ticket = await guild.create_text_channel(name=nom_salon, category=categorie, overwrites=overwrites)
-            await interaction.response.send_message(f"✅ Votre ticket a été ouvert avec succès dans {salon_ticket.mention} !", ephemeral=True)
+            await interaction.response.send_message(f"✅ Ticket ouvert dans {salon_ticket.mention} !", ephemeral=True)
 
             embed = discord.Embed(
                 title=f"🎫 Ticket - {motif_selectionne}",
-                description=f"Bonjour {interaction.user.mention},\n\nMerci d'avoir ouvert un ticket pour le motif : **{motif_selectionne}**.\nUn membre de l'équipe <@&{ROLE_ADMIN_ID}> va vous prendre en charge. Veuillez décrire votre demande en attendant.",
+                description=f"Bonjour {interaction.user.mention},\n\nMerci d'avoir ouvert un ticket pour : **{motif_selectionne}**.\nUn membre de l'équipe <@&{ROLE_ADMIN_ID}> va vous prendre en charge. Veuillez décrire votre demande.",
                 color=discord.Color.blue()
             )
             await salon_ticket.send(embed=embed, view=VueFermetureTicket())
-            
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ Erreur : Le bot n'a pas les permissions d'administration requises pour créer un salon dans cette catégorie.", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Une erreur imprévue est survenue : `{e}`", ephemeral=True)
+            await interaction.response.send_message(f"❌ Échec de création : `{e}`", ephemeral=True)
 
 class VueFermetureTicket(discord.ui.View):
     def __init__(self):
@@ -325,19 +315,86 @@ class VueFermetureTicket(discord.ui.View):
     async def bouton_fermer(self, interaction: discord.Interaction, button: discord.ui.Button):
         role_verif = discord.utils.get(interaction.user.roles, id=ROLE_ADMIN_ID)
         if not role_verif and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Seul un administrateur doté du rôle approprié peut fermer ce ticket.", ephemeral=True)
+            await interaction.response.send_message("❌ Seul un admin peut fermer ce ticket.", ephemeral=True)
             return
-        await interaction.response.send_message("🔒 **Fermeture et suppression définitive du salon dans 5 secondes.**")
+        await interaction.response.send_message("🔒 **Fermeture et suppression du salon dans 5 secondes.**")
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
-# --- LOGIQUE DU MODE TOURNOI FLASH ---
-tournoi_inscrits = []
-tournoi_etape = "ferme"
-tournoi_matchs = {}
-tournoi_vainqueurs = {}
-id_message_tournoi = None
-id_salon_tournoi = None
+async def rafraichir_partout(guild):
+    global id_message_principal, id_salon_principal
+    if not id_salon_principal: return
+
+    total_joueurs = len(classement_top)
+    max_team = obtenir_equipe_et_salon(total_joueurs) if total_joueurs > 0 else 1
+
+    for member in guild.members:
+        if member.id not in classement_top:
+            roles_mauvais = [r for r in member.roles if r.name.startswith("Team ") or r.name == "Main Roster"]
+            if roles_mauvais: 
+                try: await member.remove_roles(*roles_mauvais)
+                except: pass
+
+    for num_team in range(1, max_team + 1):
+        nom_role = obtenir_nom_role_team(num_team)
+        nom_salon_stylise = obtenir_nom_salon_team(num_team)
+        if not discord.utils.get(guild.roles, name=nom_role):
+            try: await guild.create_role(name=nom_role)
+            except: pass
+        salon_existe = any(normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise) for c in guild.channels)
+        if not salon_existe:
+            try: await guild.create_text_channel(name=nom_salon_stylise)
+            except: pass
+
+    for index, user_id in enumerate(classement_top):
+        pos = index + 1
+        team_cible = obtenir_equipe_et_salon(pos)
+        try: member = await guild.fetch_member(user_id)
+        except: member = None
+        if member:
+            nom_role_cible = obtenir_nom_role_team(team_cible)
+            role_bon = discord.utils.get(guild.roles, name=nom_role_cible)
+            roles_mauvais = [r for r in member.roles if (r.name.startswith("Team ") or r.name == "Main Roster") and r != role_bon]
+            if roles_mauvais: 
+                try: await member.remove_roles(*roles_mauvais)
+                except: pass
+            if role_bon and role_bon not in member.roles: 
+                try: await member.add_roles(role_bon)
+                except: pass
+
+    salon_top = guild.get_channel(id_salon_principal)
+    if salon_top:
+        texte_top = "🏆 **CLASSEMENT GÉNÉRAL COMPLET** 🏆\n\n"
+        if not classement_top: texte_top += "*Aucun joueur dans le top pour le moment.*"
+        for index, u_id in enumerate(classement_top): texte_top += f"**Top {index + 1}** : <@{u_id}>\n"
+        
+        if id_message_principal:
+            try:
+                msg = await salon_top.fetch_message(id_message_principal)
+                await msg.edit(content=texte_top, view=VueControleTop())
+            except:
+                msg = await salon_top.send(content=texte_top, view=VueControleTop())
+                id_message_principal = msg.id
+        else:
+            msg = await salon_top.send(content=texte_top, view=VueControleTop())
+            id_message_principal = msg.id
+
+    for num_team in range(1, max_team + 1):
+        nom_salon_stylise = obtenir_nom_salon_team(num_team)
+        salon_team = discord.utils.find(lambda c: normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise), guild.channels)
+        if salon_team:
+            try: await salon_team.purge(limit=50)
+            except: pass
+            lignes = [f"**Top {i+1}** : <@{uid}>" for i, uid in enumerate(classement_top) if obtenir_equipe_et_salon(i+1) == num_team]
+            titre_affichage = "MAIN ROSTER" if num_team == 1 else f"Team {num_team}"
+            try:
+                if lignes: await salon_team.send(f"🏆 **Membres - {titre_affichage}** 🏆\n\n" + "\n".join(lignes))
+                else: await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
+            except: pass
+
+# --- FLASH TOURNAMENT LOGIC ---
+tournoi_inscrits, tournoi_etape, tournoi_matchs, tournoi_vainqueurs = [], "ferme", {}, {}
+id_message_tournoi, id_salon_tournoi = None, None
 
 def generer_affichage_tournoi():
     global tournoi_etape, tournoi_matchs, tournoi_vainqueurs
@@ -348,8 +405,8 @@ def generer_affichage_tournoi():
         return texte
     texte += "◽ **QUARTS DE FINALE** ◽\n"
     for m in range(1, 5):
-        p1 = f"<@{tournoi_matchs[f'Q{m}']}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 0 else "À définir"
-        p2 = f"<@{tournoi_matchs[f'Q{m}']}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 1 else "À définir"
+        p1 = f"<@{tournoi_matchs[f'Q{m}'][0]}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 0 else "À définir"
+        p2 = f"<@{tournoi_matchs[f'Q{m}'][1]}>" if f'Q{m}' in tournoi_matchs and len(tournoi_matchs[f'Q{m}']) > 1 else "À définir"
         v = f"🏅 Vainqueur : <@{tournoi_vainqueurs[f'Q{m}']}>" if f'Q{m}' in tournoi_vainqueurs else "En attente..."
         texte += f"🔹 Match Q{m} : {p1} VS {p2}\n   └─ {v}\n"
     return texte
@@ -431,21 +488,9 @@ async def valider_gagnant_match(ctx, code_match: str, membre: discord.Member):
 @bot.command(name="setup_ticket")
 @commands.has_permissions(administrator=True)
 async def envoyer_panneau_ticket(ctx):
-    """Envoie de manière garantie le panneau des tickets avec sa vue associée."""
     await ctx.message.delete()
-    embed = discord.Embed(
-        title="🎫 Support & Recrutement - Système de Tickets", 
-        description="Cliquez ci-dessous pour ouvrir un salon d'assistance privé et choisir votre motif.", 
-        color=discord.Color.green()
-    )
-    # Import local de secours de la vue pour forcer Python à la trouver
-    try:
-        from __main__ import VueCreationTicket
-        view_ticket = VueCreationTicket()
-    except:
-        view_ticket = VueCreationTicket()
-        
-    await ctx.send(embed=embed, view=view_ticket)
+    embed = discord.Embed(title="🎫 Support & Recrutement - Système de Tickets", description="Cliquez ci-dessous pour ouvrir un salon d'assistance privé.", color=discord.Color.green())
+    await ctx.send(embed=embed, view=VueCreationTicket())
 
 @bot.event
 async def on_ready():
