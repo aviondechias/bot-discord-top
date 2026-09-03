@@ -6,7 +6,7 @@ from threading import Thread
 import os
 import json
 
-# --- KEEP-ALIVE WEB SERVER ---
+# --- SERVER WEB KEEP-ALIVE ---
 app = Flask('')
 
 @app.route('/')
@@ -19,20 +19,19 @@ def run_web_server():
 def keep_alive():
     Thread(target=run_web_server).start()
 
-# --- BOT CONFIGURATION ---
+# --- CONFIGURATION BOT ---
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Memory Storage variables
+# Stockage des données en mémoire
 classement_top = []
 id_message_principal = None
 id_salon_principal = None
 
 ROLE_ADMIN_ID = 1529373902969770094
 FICHIER_SAUVEGARDE = "sauvegardes_top.json"
-CATEGORIE_TICKET_ID = 1544890174981414993
 
 def charger_sauvegardes():
     if not os.path.exists(FICHIER_SAUVEGARDE):
@@ -73,7 +72,7 @@ def obtenir_equipe_et_salon(position):
 def normaliser_nom_salon(nom):
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
 
-# --- DATABASE BACKUP & RESTORE LOGIC (DATA) ---
+# --- LOGIQUE DE SAUVEGARDE & RESTAURATION DATA ---
 class VueDataOptions(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
@@ -115,7 +114,7 @@ class MenuDeroulantSauvegardes(discord.ui.Select):
         super().__init__(placeholder="Choisissez une sauvegarde...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        nom_selectionne = self.values[0]
+        nom_selectionne = self.values
         await interaction.response.send_message(content=f"⚙️ Options pour `{nom_selectionne}`", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
 
 class VueActionSauvegarde(discord.ui.View):
@@ -155,7 +154,7 @@ class VueConfirmationRestauration(discord.ui.View):
     async def btn_non(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("❌ Annulé.", ephemeral=True)
 
-# --- MAIN LEADERBOARD CONTROL PANEL & MODALS ---
+# --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
     pos_arrivee = discord.ui.TextInput(label="Sa nouvelle position voulue", placeholder="Ex: 2")
@@ -248,7 +247,7 @@ class VueControleTop(discord.ui.View):
         embed.add_field(name="🛠️ Commandes Admin", value="`!setup`, `!add @membre`, `!addmany @m1 @m2...`, `!remove @membre`, `!tstart`, `!twin`, `!setup_ticket`", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# --- SECURE TICKET SYSTEM (OPEN TO ALL MEMBERS) ---
+# --- SYSTÈME DE TICKETS DYNAMIQUE ET MULTI-SERVEUR ---
 class VueCreationTicket(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -272,26 +271,29 @@ class MenuDeroulantMotif(discord.ui.Select):
         super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        motif_selectionne = self.values[0] # Properly extracts text string from dropdown array selection
+        motif_selectionne = self.values[0] # Extraction textuelle sécurisée multi-serveur
         guild = interaction.guild
-        categorie = guild.get_channel(CATEGORIE_TICKET_ID)
-
-        if not categorie or not isinstance(categorie, discord.CategoryChannel):
-            await interaction.response.send_message("❌ Catégorie introuvable ou mal configurée.", ephemeral=True)
-            return
+        
+        # RECHERCHE OU CRÉATION AUTOMATIQUE DE LA CATÉGORIE DU SERVEUR
+        categorie = discord.utils.find(lambda c: c.name.upper() == "🎫 TICKETS" and isinstance(c, discord.CategoryChannel), guild.channels)
+        if not categorie:
+            try:
+                categorie = await guild.create_category(name="🎫 TICKETS")
+            except Exception as e:
+                await interaction.response.send_message(f"❌ Impossible de créer la catégorie automatique : `{e}`", ephemeral=True)
+                return
 
         membre_createur = interaction.user
-        
-        # Enforces private channel viewing restrictions (Hidden from @everyone)
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
             membre_createur: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, view_channel=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
         }
         
-        # Grants explicit view/chat permission to designated Admin role ID
+        # Liaison dynamique : cherche par rôle ID si présent, sinon ajoute le créateur et l'administrateur système du serveur courant
         role_admin = guild.get_role(ROLE_ADMIN_ID)
-        if role_admin: overwrites[role_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
+        if role_admin: 
+            overwrites[role_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
 
         nom_salon = f"🎫-{motif_selectionne.lower().replace(' ', '-')}-{interaction.user.name}"
         try:
@@ -300,12 +302,12 @@ class MenuDeroulantMotif(discord.ui.Select):
 
             embed = discord.Embed(
                 title=f"🎫 Ticket - {motif_selectionne}",
-                description=f"Bonjour {interaction.user.mention},\n\nMerci d'avoir ouvert un ticket pour : **{motif_selectionne}**.\nUn membre de l'équipe <@&{ROLE_ADMIN_ID}> va vous prendre en charge. Veuillez décrire votre demande.",
+                description=f"Bonjour {interaction.user.mention},\n\nMerci d'avoir ouvert un ticket pour : **{motif_selectionne}**.\nL'équipe administrative va vous prendre en charge. Veuillez décrire votre demande.",
                 color=discord.Color.blue()
             )
             await salon_ticket.send(embed=embed, view=VueFermetureTicket())
         except Exception as e:
-            await interaction.response.send_message(f"❌ Échec de création : `{e}`", ephemeral=True)
+            await interaction.response.send_message(f"❌ Échec de création du salon : `{e}`", ephemeral=True)
 
 class VueFermetureTicket(discord.ui.View):
     def __init__(self):
@@ -315,7 +317,7 @@ class VueFermetureTicket(discord.ui.View):
     async def bouton_fermer(self, interaction: discord.Interaction, button: discord.ui.Button):
         role_verif = discord.utils.get(interaction.user.roles, id=ROLE_ADMIN_ID)
         if not role_verif and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Seul un admin peut fermer ce ticket.", ephemeral=True)
+            await interaction.response.send_message("❌ Seul un administrateur peut fermer ce ticket.", ephemeral=True)
             return
         await interaction.response.send_message("🔒 **Fermeture et suppression du salon dans 5 secondes.**")
         await asyncio.sleep(5)
@@ -392,7 +394,7 @@ async def rafraichir_partout(guild):
                 else: await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
             except: pass
 
-# --- FLASH TOURNAMENT LOGIC ---
+# --- LOGIQUE DU MODE TOURNOI FLASH ---
 tournoi_inscrits, tournoi_etape, tournoi_matchs, tournoi_vainqueurs = [], "ferme", {}, {}
 id_message_tournoi, id_salon_tournoi = None, None
 
@@ -489,7 +491,7 @@ async def valider_gagnant_match(ctx, code_match: str, membre: discord.Member):
 @commands.has_permissions(administrator=True)
 async def envoyer_panneau_ticket(ctx):
     await ctx.message.delete()
-    embed = discord.Embed(title="🎫 Support & Recrutement - Système de Tickets", description="Cliquez ci-dessous pour ouvrir un salon d'assistance privé.", color=discord.Color.green())
+    embed = discord.Embed(title="🎫 Support & Recrutement - Système de Tickets", description="Cliquez ci-dessous pour ouvrir un salon d'assistance privé et choisir votre motif.", color=discord.Color.green())
     await ctx.send(embed=embed, view=VueCreationTicket())
 
 @bot.event
