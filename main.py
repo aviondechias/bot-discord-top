@@ -25,7 +25,7 @@ intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Données converties en dictionnaires pour séparer chaque serveur par son ID
+# Cloisonnement des données par ID de serveur (Multi-Serveur)
 classements_par_serveur = {}      # {guild_id: [liste_joueurs]}
 id_messages_principaux = {}       # {guild_id: id_message}
 id_salons_principaux = {}         # {guild_id: id_salon}
@@ -33,8 +33,8 @@ id_salons_principaux = {}         # {guild_id: id_salon}
 ROLE_ADMIN_ID = 1529373902969770094
 FICHIER_SAUVEGARDE = "sauvegardes_top.json"
 
+# --- GESTION DE LA BASE DE DONNÉES JSON ---
 def charger_sauvegardes():
-    """Charge toutes les sauvegardes depuis le fichier JSON permanent."""
     if not os.path.exists(FICHIER_SAUVEGARDE):
         return {}
     try:
@@ -44,12 +44,9 @@ def charger_sauvegardes():
         return {}
 
 def enregistrer_sauvegardes(data):
-    """Enregistre les données globales dans le fichier JSON permanent."""
     with open(FICHIER_SAUVEGARDE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-
 def obtenir_donnees_serveur(guild_id, nom_save):
-    """Récupère une sauvegarde spécifique propre à un serveur donné."""
     data_globale = charger_sauvegardes()
     cle_serveur = str(guild_id)
     if cle_serveur in data_globale and nom_save in data_globale[cle_serveur]:
@@ -57,7 +54,6 @@ def obtenir_donnees_serveur(guild_id, nom_save):
     return None
 
 def sauvegarder_donnees_serveur(guild_id, nom_save, liste_top):
-    """Enregistre une sauvegarde propre à un serveur sans toucher aux autres."""
     data_globale = charger_sauvegardes()
     cle_serveur = str(guild_id)
     if cle_serveur not in data_globale:
@@ -66,12 +62,10 @@ def sauvegarder_donnees_serveur(guild_id, nom_save, liste_top):
     enregistrer_sauvegardes(data_globale)
 
 def obtenir_liste_sauvegardes_serveur(guild_id):
-    """Retourne uniquement les sauvegardes qui appartiennent au serveur actuel."""
     data_globale = charger_sauvegardes()
     return data_globale.get(str(guild_id), {})
 
 def supprimer_sauvegarde_serveur(guild_id, nom_save):
-    """Supprime une sauvegarde d'un serveur spécifique."""
     data_globale = charger_sauvegardes()
     cle_serveur = str(guild_id)
     if cle_serveur in data_globale and nom_save in data_globale[cle_serveur]:
@@ -101,8 +95,7 @@ def obtenir_equipe_et_salon(position):
 
 def normaliser_nom_salon(nom):
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
-
-# --- LOGIQUE MULTI-SERVEUR ISOLE DU BOUTON DATA ---
+# --- LOGIQUE DE SAUVEGARDE & RESTAURATION DATA (PANNEAU ADMIN) ---
 class VueDataOptions(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
@@ -117,7 +110,7 @@ class VueDataOptions(discord.ui.View):
         if not sauvegardes_serveur:
             await interaction.response.send_message("ℹ️ Aucune sauvegarde enregistrée sur ce serveur.", ephemeral=True)
             return
-        await interaction.response.send_message("📂 Sélectionnez une sauvegarde de ce serveur :", view=VueListeSauvegardes(sauvegardes_serveur), ephemeral=True)
+        await interaction.response.send_message("📂 Sélectionnez une sauvegarde :", view=VueListeSauvegardes(sauvegardes_serveur), ephemeral=True)
 
 class FenetreNomSauvegarde(discord.ui.Modal, title="Nommer l'enregistrement"):
     nom_save = discord.ui.TextInput(label="Nom de la sauvegarde", placeholder="Ex: Fin_Semaine_1")
@@ -127,11 +120,9 @@ class FenetreNomSauvegarde(discord.ui.Modal, title="Nommer l'enregistrement"):
         if not nom:
             await interaction.response.send_message("❌ Nom invalide.", ephemeral=True)
             return
-        
-        # Récupération de la liste spécifique à ce serveur
         top_actuel = classements_par_serveur.get(interaction.guild_id, [])
         sauvegarder_donnees_serveur(interaction.guild_id, nom, top_actuel)
-        await interaction.response.send_message(f"💾 Enregistré avec succès pour ce serveur sous : `{nom}`", ephemeral=True)
+        await interaction.response.send_message(f"💾 Enregistré avec succès sous : `{nom}`", ephemeral=True)
 
 class VueListeSauvegardes(discord.ui.View):
     def __init__(self, sauvegardes_serveur):
@@ -145,7 +136,7 @@ class MenuDeroulantSauvegardes(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         nom_selectionne = self.values
-        await interaction.response.send_message(content=f"⚙️ Options pour la sauvegarde `{nom_selectionne}` :", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
+        await interaction.response.send_message(content=f"⚙️ Options pour `{nom_selectionne}`", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
 
 class VueActionSauvegarde(discord.ui.View):
     def __init__(self, nom_sauvegarde):
@@ -159,7 +150,7 @@ class VueActionSauvegarde(discord.ui.View):
     @discord.ui.button(label="SUPPRIMER 🗑️", style=discord.ButtonStyle.secondary)
     async def btn_supprimer_save(self, interaction: discord.Interaction, button: discord.ui.Button):
         supprimer_sauvegarde_serveur(interaction.guild_id, self.nom_sauvegarde)
-        await interaction.response.send_message(f"🗑️ La sauvegarde `{self.nom_sauvegarde}` a été supprimée de ce serveur.", ephemeral=True)
+        await interaction.response.send_message(f"🗑️ `{self.nom_sauvegarde}` supprimé de la base.", ephemeral=True)
 
 class VueConfirmationRestauration(discord.ui.View):
     def __init__(self, nom_sauvegarde):
@@ -172,16 +163,15 @@ class VueConfirmationRestauration(discord.ui.View):
         sauvegarde = obtenir_donnees_serveur(interaction.guild_id, self.nom_sauvegarde)
         if sauvegarde is not None:
             classements_par_serveur[interaction.guild_id] = list(sauvegarde)
-            await interaction.response.send_message(f"✅ Configuration `{self.nom_sauvegarde}` chargée sur ce serveur !", ephemeral=True)
+            await interaction.response.send_message(f"✅ Configuration `{self.nom_sauvegarde}` chargée !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         else:
             await interaction.response.send_message("❌ Sauvegarde introuvable.", ephemeral=True)
 
     @discord.ui.button(label="NON, ANNULER ❌", style=discord.ButtonStyle.secondary)
     async def btn_non(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("❌ Opération annulée.", ephemeral=True)
-
-# --- INTERFACES DES FENÊTRES POP-UP (MODALS) ---
+        await interaction.response.send_message("❌ Annulé.", ephemeral=True)
+# --- INTERFACES DES FENÊTRES POP-UP (MODALS CLASSEMENT) ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle du joueur", placeholder="Ex: 5")
     pos_arrivee = discord.ui.TextInput(label="Sa nouvelle position voulue", placeholder="Ex: 2")
@@ -279,8 +269,7 @@ class VueControleTop(discord.ui.View):
         embed = discord.Embed(title="🤖 Guide des commandes", color=discord.Color.gold())
         embed.add_field(name="🛠️ Admin", value="`!setup`, `!add @m`, `!addmany @m1...`, `!remove @m`, `!tstart`, `!twin`, `!setup_ticket`", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# --- SYSTÈME DE TICKETS ENTIÈREMENT ISOLÉ PAR SERVEUR ---
+# --- SYSTÈME DE TICKETS DYNAMIQUE ET MULTI-SERVEUR (OUVERT À TOUS) ---
 class VueCreationTicket(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -304,10 +293,9 @@ class MenuDeroulantMotif(discord.ui.Select):
         super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        motif_selectionne = self.values
+        motif_selectionne = self.values # Extrait la string de la liste
         guild = interaction.guild
         
-        # Recherche ou création de la catégorie stylisée propre à ce serveur
         categorie = discord.utils.find(lambda c: c.name == "🎫 𝙏𝙄𝘾𝙆𝙀𝙏" and isinstance(c, discord.CategoryChannel), guild.channels)
         if not categorie:
             try: categorie = await guild.create_category(name="🎫 𝙏𝙄𝘾𝙆𝙀𝙏")
@@ -352,7 +340,7 @@ class VueFermetureTicket(discord.ui.View):
         await interaction.response.send_message("🔒 **Fermeture et suppression du salon dans 5 secondes.**")
         await asyncio.sleep(5)
         await interaction.channel.delete()
-
+# --- REFRESH ET RÔLES DYNAMIQUES PAR SERVEUR ---
 async def rafraichir_partout(guild):
     global id_messages_principaux, id_salons_principaux, classements_par_serveur
     gid = guild.id
@@ -426,7 +414,7 @@ async def rafraichir_partout(guild):
                 else: await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
             except: pass
 
-# --- LOGIQUE DU MODE TOURNOI FLASH PAR SERVEUR ---
+# --- LOGIQUE DU MODE TOURNOI FLASH ---
 tournois_par_serveur = {} # {guild_id: {"inscrits": [], "etape": "ferme", "matchs": {}, "vainqueurs": {}, "msg_id": None}}
 
 def generer_affichage_tournoi(gid):
@@ -438,8 +426,8 @@ def generer_affichage_tournoi(gid):
         return texte
     texte += "◽ **QUARTS DE FINALE** ◽\n"
     for m in range(1, 5):
-        p1 = f"<@{t['matchs'][f'Q{m}'][0]}>" if f'Q{m}' in t['matchs'] and len(t['matchs'][f'Q{m}']) > 0 else "À définir"
-        p2 = f"<@{t['matchs'][f'Q{m}'][1]}>" if f'Q{m}' in t['matchs'] and len(t['matchs'][f'Q{m}']) > 1 else "À définir"
+        p1 = f"<@{t['matchs'][f'Q{m}']}>" if f'Q{m}' in t['matchs'] and len(t['matchs'][f'Q{m}']) > 0 else "À définir"
+        p2 = f"<@{t['matchs'][f'Q{m}']}>" if f'Q{m}' in t['matchs'] and len(t['matchs'][f'Q{m}']) > 1 else "À définir"
         v = f"🏅 Vainqueur : <@{t['vainqueurs'][f'Q{m}']}>" if f'Q{m}' in t['vainqueurs'] else "En attente..."
         texte += f"🔹 Match Q{m} : {p1} VS {p2}\n   └─ {v}\n"
     return texte
@@ -461,6 +449,7 @@ class VueInscriptionTournoi(discord.ui.View):
         else: await interaction.message.edit(content=generer_affichage_tournoi(gid), view=self)
         await interaction.response.defer()
 
+# --- COMMANDES ADMIN TEXTUELLES ---
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
 async def initialiser_salon_top(ctx):
