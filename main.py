@@ -6,7 +6,7 @@ from threading import Thread
 import os
 import json
 
-# --- SERVEUR WEB KEEP-ALIVE ---
+# --- KEEP-ALIVE WEB SERVER ---
 app = Flask('')
 
 @app.route('/')
@@ -19,7 +19,7 @@ def run_web_server():
 def keep_alive():
     Thread(target=run_web_server).start()
 
-# --- CONFIGURATION BOT ---
+# --- BOT CONFIGURATION ---
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
@@ -135,7 +135,7 @@ class MenuDeroulantSauvegardes(discord.ui.Select):
         super().__init__(placeholder="Choisissez une sauvegarde...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        nom_selectionne = self.values
+        nom_selectionne = self.values[0] if isinstance(self.values, list) else self.values
         await interaction.response.send_message(content=f"⚙️ Options pour `{nom_selectionne}`", view=VueActionSauvegarde(nom_selectionne), ephemeral=True)
 
 class VueActionSauvegarde(discord.ui.View):
@@ -160,13 +160,15 @@ class VueConfirmationRestauration(discord.ui.View):
     @discord.ui.button(label="OUI, ACCEPTER 🛠️", style=discord.ButtonStyle.danger)
     async def btn_oui(self, interaction: discord.Interaction, button: discord.ui.Button):
         global classements_par_serveur
+        await interaction.response.defer(ephemeral=True)
+        
         sauvegarde = obtenir_donnees_serveur(interaction.guild_id, self.nom_sauvegarde)
         if sauvegarde is not None:
             classements_par_serveur[interaction.guild_id] = list(sauvegarde)
-            await interaction.response.send_message(f"✅ Configuration `{self.nom_sauvegarde}` chargée !", ephemeral=True)
+            await interaction.followup.send(f"✅ Configuration `{self.nom_sauvegarde}` chargée !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         else:
-            await interaction.response.send_message("❌ Sauvegarde introuvable.", ephemeral=True)
+            await interaction.followup.send("❌ Sauvegarde introuvable.", ephemeral=True)
 
     @discord.ui.button(label="NON, ANNULER ❌", style=discord.ButtonStyle.secondary)
     async def btn_non(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -186,9 +188,11 @@ class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
             if p_dep < 0 or p_arr < 0 or p_dep >= len(classements_par_serveur[gid]) or p_arr >= len(classements_par_serveur[gid]):
                 await interaction.response.send_message("❌ Positions invalides.", ephemeral=True)
                 return
+            
+            await interaction.response.defer(ephemeral=True)
             joueur_id = classements_par_serveur[gid].pop(p_dep)
             classements_par_serveur[gid].insert(p_arr, joueur_id)
-            await interaction.response.send_message("📈 Déplacement effectué !", ephemeral=True)
+            await interaction.followup.send("📈 Déplacement effectué !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
@@ -207,8 +211,10 @@ class FenetreEchange(discord.ui.Modal, title="Échanger 2 places (Permuter)"):
             if p1 < 0 or p2 < 0 or p1 >= len(classements_par_serveur[gid]) or p2 >= len(classements_par_serveur[gid]):
                 await interaction.response.send_message("❌ Positions invalides.", ephemeral=True)
                 return
+            
+            await interaction.response.defer(ephemeral=True)
             classements_par_serveur[gid][p1], classements_par_serveur[gid][p2] = classements_par_serveur[gid][p2], classements_par_serveur[gid][p1]
-            await interaction.response.send_message("🔄 Échange effectué !", ephemeral=True)
+            await interaction.followup.send("🔄 Échange effectué !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer des nombres entiers.", ephemeral=True)
@@ -225,8 +231,10 @@ class FenetreSuppression(discord.ui.Modal, title="Retirer un joueur du Top"):
             if p < 0 or p >= len(classements_par_serveur[gid]):
                 await interaction.response.send_message("❌ Position invalide.", ephemeral=True)
                 return
+            
+            await interaction.response.defer(ephemeral=True)
             classements_par_serveur[gid].pop(p)
-            await interaction.response.send_message("❌ Joueur retiré avec succès !", ephemeral=True)
+            await interaction.followup.send("❌ Joueur retiré avec succès !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         except ValueError:
             await interaction.response.send_message("❌ Veuillez entrer un nombre valide.", ephemeral=True)
@@ -267,7 +275,7 @@ class VueControleTop(discord.ui.View):
     @discord.ui.button(label="Liste des Commandes ❓", style=discord.ButtonStyle.success, custom_id="btn_help")
     async def bouton_aide(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="🤖 Guide des commandes", color=discord.Color.gold())
-        embed.add_field(name="🛠️ Admin", value="`!setup`, `!add @m`, `!addmany @m1...`, `!remove @m`, `!tstart`, `!twin`, `!setup_ticket`", inline=False)
+        embed.add_field(name="🛠️ Admin", value="`!setup`, `!add @membre`, `!addmany @m1 @m2...`, `!remove @membre`, `!tstart`, `!twin`, `!setup_ticket`", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 # --- SYSTÈME DE TICKETS DYNAMIQUE ET MULTI-SERVEUR (OUVERT À TOUS) ---
 class VueCreationTicket(discord.ui.View):
@@ -293,7 +301,7 @@ class MenuDeroulantMotif(discord.ui.Select):
         super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        motif_selectionne = self.values # Extrait la string de la liste
+        motif_selectionne = self.values[0] if isinstance(self.values, list) else self.values
         guild = interaction.guild
         
         categorie = discord.utils.find(lambda c: c.name == "🎫 𝙏𝙄𝘾𝙆𝙀𝙏" and isinstance(c, discord.CategoryChannel), guild.channels)
@@ -426,8 +434,8 @@ def generer_affichage_tournoi(gid):
         return texte
     texte += "◽ **QUARTS DE FINALE** ◽\n"
     for m in range(1, 5):
-        p1 = f"<@{t['matchs'][f'Q{m}']}>" if f'Q{m}' in t['matchs'] and len(t['matchs'][f'Q{m}']) > 0 else "À définir"
-        p2 = f"<@{t['matchs'][f'Q{m}']}>" if f'Q{m}' in t['matchs'] and len(t['matchs'][f'Q{m}']) > 1 else "À définir"
+        p1 = f"<@{t['matchs'][f'Q{m}'][0]}>" if f'Q{m}' in t['matchs'] and len(t['matchs'][f'Q{m}']) > 0 else "À définir"
+        p2 = f"<@{t['matchs'][f'Q{m}'][1]}>" if f'Q{m}' in t['matchs'] and len(t['matchs'][f'Q{m}']) > 1 else "À définir"
         v = f"🏅 Vainqueur : <@{t['vainqueurs'][f'Q{m}']}>" if f'Q{m}' in t['vainqueurs'] else "En attente..."
         texte += f"🔹 Match Q{m} : {p1} VS {p2}\n   └─ {v}\n"
     return texte
