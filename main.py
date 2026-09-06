@@ -94,7 +94,7 @@ def obtenir_equipe_et_salon_dynamique(guild_id, position):
 
 def normaliser_nom_salon(nom):
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
-# --- PANEL DE CONFIGURATION PREMIUM DYNAMIQUE ---
+  # --- PANEL DE CONFIGURATION PREMIUM DYNAMIQUE ---
 class VuePanelConfig(discord.ui.View):
     def __init__(self, guild_id):
         super().__init__(timeout=120)
@@ -112,11 +112,15 @@ class MenuDeroulantConfiguration(discord.ui.Select):
         super().__init__(placeholder="⚙️ Sélectionnez l'élément à configurer...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        choix = self.values if isinstance(self.values, list) else self.values
-        if choix == "taille": await interaction.response.send_modal(ModalTailleTeam())
-        elif choix == "role_admin": await interaction.response.send_modal(ModalRoleAdmin())
-        elif choix == "custom_team": await interaction.response.send_modal(ModalNomTeam())
-        elif choix == "motifs": await interaction.response.send_modal(ModalMotifsTickets())
+        # Immediate response acknowledgment prevents interaction timeouts
+        await interaction.response.defer(ephemeral=True)
+        choix = self.values[0] if isinstance(self.values, list) else self.values
+        
+        # Opens modals via followup send targets
+        if choix == "taille": await interaction.followup.send(content="👥 Ouverture du formulaire...", modal=ModalTailleTeam(), ephemeral=True)
+        elif choix == "role_admin": await interaction.followup.send(content="🛡️ Ouverture du formulaire...", modal=ModalRoleAdmin(), ephemeral=True)
+        elif choix == "custom_team": await interaction.followup.send(content="✏️ Ouverture du formulaire...", modal=ModalNomTeam(), ephemeral=True)
+        elif choix == "motifs": await interaction.followup.send(content="🎫 Ouverture du formulaire...", modal=ModalMotifsTickets(), ephemeral=True)
 
 class ModalTailleTeam(discord.ui.Modal, title="Configuration Roster 👥"):
     taille = discord.ui.TextInput(label="Nombre max de joueurs dans le Main Roster", placeholder="Entrez un chiffre (Ex: 5 ou 6)", min_length=1, max_length=2)
@@ -203,6 +207,8 @@ class FenetreCollerCode(discord.ui.Modal, title="Coller votre code"):
                 await rafraichir_partout(interaction.guild)
             else: await interaction.followup.send("❌ Structure de données corrompue.", ephemeral=True)
         except Exception as e: await interaction.followup.send(f"❌ Impossible de lire ce code : `{e}`", ephemeral=True)
+  
+
 # --- INTERFACES DES POPUPS CLASSEMENT ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle", placeholder="Ex: 5")
@@ -281,9 +287,12 @@ class VueControleTop(discord.ui.View):
         embed = discord.Embed(title="🤖 Guide des commandes", color=discord.Color.gold())
         embed.add_field(name="🛠️ Commandes Admin", value="`!setup`, `!add @membre`, `!addmany @m1 @m2...`, `!remove @membre`, `!tstart`, `!twin`, `!setup_ticket`, `!config`", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        
 # --- SECURE TICKET SYSTEM ---
 class VueCreationTicket(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
+    def __init__(self):
+        super().__init__(timeout=None)
+
     @discord.ui.button(label="Créer un ticket 🎫", style=discord.ButtonStyle.primary, custom_id="btn_creer_ticket")
     async def bouton_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(content="📋 **Sélectionnez le motif de votre ticket :**", view=VueChoixMotifTicket(interaction.guild_id), ephemeral=True)
@@ -296,41 +305,58 @@ class VueChoixMotifTicket(discord.ui.View):
         self.add_item(MenuDeroulantMotif(options))
 
 class MenuDeroulantMotif(discord.ui.Select):
-    def __init__(self, options): super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
+    def __init__(self, options):
+        super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
+
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True) # Immediate defer prevents timeouts
-        motif_selectionne = self.values if isinstance(self.values, list) else self.values
+        await interaction.response.defer(ephemeral=True)
+        motif_selectionne = self.values[0] if isinstance(self.values, list) else self.values
         guild = interaction.guild
         conf = obtenir_config_serveur(guild.id)
         
-        # Exact mathematical italic category parsing logic
         nom_categorie_propre = "🎫 𝙏𝙄𝘾𝙆𝙀𝙏"
         categorie = discord.utils.find(lambda c: c.name == nom_categorie_propre and isinstance(c, discord.CategoryChannel), guild.channels)
         if not categorie:
-            try: categorie = await guild.create_category(name=nom_categorie_propre)
+            try:
+                categorie = await guild.create_category(name=nom_categorie_propre)
             except Exception as e:
                 await interaction.followup.send(f"❌ Erreur catégorie : `{e}`", ephemeral=True)
                 return
 
-        membre_createur = interaction.user
+        # Explicitly fetches the server Member instance to secure correct object mapping permissions
+        try:
+            membre_createur = await guild.fetch_member(interaction.user.id)
+        except:
+            membre_createur = interaction.user
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
             membre_createur: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, view_channel=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
         }
+        
         role_admin = guild.get_role(int(conf["role_admin_id"]))
-        if role_admin: overwrites[role_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
+        if role_admin: 
+            overwrites[role_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
 
         nom_salon = f"🎫-{motif_selectionne.lower().replace(' ', '-')}-{interaction.user.name}"
         try:
             salon_ticket = await guild.create_text_channel(name=nom_salon, category=categorie, overwrites=overwrites)
             await interaction.followup.send(f"✅ Ticket ouvert dans {salon_ticket.mention} !", ephemeral=True)
-            embed = discord.Embed(title=f"🎫 Ticket - {motif_selectionne}", description=f"Bonjour {interaction.user.mention},\n\nMerci d'avoir ouvert un ticket pour : **{motif_selectionne}**.\nL'équipe administrative va vous prendre en charge. Veuillez décrire votre demande.", color=discord.Color.blue())
+            
+            embed = discord.Embed(
+                title=f"🎫 Ticket - {motif_selectionne}", 
+                description=f"Bonjour {interaction.user.mention},\n\nMerci d'avoir ouvert un ticket pour : **{motif_selectionne}**.\nL'équipe administrative va vous prendre en charge. Veuillez décrire votre demande.", 
+                color=discord.Color.blue()
+            )
             await salon_ticket.send(embed=embed, view=VueFermetureTicket())
-        except Exception as e: await interaction.followup.send(f"❌ Échec de création : `{e}`", ephemeral=True)
+        except Exception as e: 
+            await interaction.followup.send(f"❌ Échec de création du salon : `{e}`", ephemeral=True)
 
 class VueFermetureTicket(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
+    def __init__(self):
+        super().__init__(timeout=None)
+
     @discord.ui.button(label="Fermer le ticket 🔒", style=discord.ButtonStyle.danger, custom_id="btn_fermer_ticket")
     async def bouton_fermer(self, interaction: discord.Interaction, button: discord.ui.Button):
         conf = obtenir_config_serveur(interaction.guild_id)
@@ -341,6 +367,7 @@ class VueFermetureTicket(discord.ui.View):
         await interaction.response.send_message("🔒 **Fermeture et suppression du salon dans 5 secondes.**")
         await asyncio.sleep(5)
         await interaction.channel.delete()
+
 # --- REFRESH ET RÔLES DYNAMIQUES PAR SERVEUR (SÉCURISÉ CONTRE LES CRASHS) ---
 async def rafraichir_partout(guild):
     global id_messages_principaux, id_salons_principaux, classements_par_serveur
