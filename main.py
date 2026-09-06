@@ -112,15 +112,17 @@ class MenuDeroulantConfiguration(discord.ui.Select):
         super().__init__(placeholder="⚙️ Sélectionnez l'élément à configurer...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        # Immediate response acknowledgment prevents interaction timeouts
-        await interaction.response.defer(ephemeral=True)
         choix = self.values[0] if isinstance(self.values, list) else self.values
         
-        # Opens modals via followup send targets
-        if choix == "taille": await interaction.followup.send(content="👥 Ouverture du formulaire...", modal=ModalTailleTeam(), ephemeral=True)
-        elif choix == "role_admin": await interaction.followup.send(content="🛡️ Ouverture du formulaire...", modal=ModalRoleAdmin(), ephemeral=True)
-        elif choix == "custom_team": await interaction.followup.send(content="✏️ Ouverture du formulaire...", modal=ModalNomTeam(), ephemeral=True)
-        elif choix == "motifs": await interaction.followup.send(content="🎫 Ouverture du formulaire...", modal=ModalMotifsTickets(), ephemeral=True)
+        # Fixed: Modals are now sent as the immediate initial response, allowing the popup form to appear instantly
+        if choix == "taille": 
+            await interaction.response.send_modal(ModalTailleTeam())
+        elif choix == "role_admin": 
+            await interaction.response.send_modal(ModalRoleAdmin())
+        elif choix == "custom_team": 
+            await interaction.response.send_modal(ModalNomTeam())
+        elif choix == "motifs": 
+            await interaction.response.send_modal(ModalMotifsTickets())
 
 class ModalTailleTeam(discord.ui.Modal, title="Configuration Roster 👥"):
     taille = discord.ui.TextInput(label="Nombre max de joueurs dans le Main Roster", placeholder="Entrez un chiffre (Ex: 5 ou 6)", min_length=1, max_length=2)
@@ -130,7 +132,8 @@ class ModalTailleTeam(discord.ui.Modal, title="Configuration Roster 👥"):
             mettre_a_jour_config_serveur(interaction.guild_id, "taille_team", val)
             embed = discord.Embed(title="⚙️ Configuration Mise à Jour", description=f"La taille maximale du **Main Roster** a été fixée à **{val} joueurs**.", color=discord.Color.green())
             await interaction.response.send_message(embed=embed, ephemeral=True)
-        except: await interaction.response.send_message("❌ Erreur : Veuillez entrer un nombre entier valide.", ephemeral=True)
+        except: 
+            await interaction.response.send_message("❌ Erreur : Veuillez entrer un nombre entier valide.", ephemeral=True)
 
 class ModalRoleAdmin(discord.ui.Modal, title="Sécurité Staff 🛡️"):
     rid = discord.ui.TextInput(label="ID du rôle autorisé pour les commandes DATA", placeholder="Collez l'ID numérique ici")
@@ -140,11 +143,12 @@ class ModalRoleAdmin(discord.ui.Modal, title="Sécurité Staff 🛡️"):
             mettre_a_jour_config_serveur(interaction.guild_id, "role_admin_id", val)
             embed = discord.Embed(title="⚙️ Configuration Mise à Jour", description=f"Le rôle Admin de gestion a été lié avec succès à l'ID : `{val}`.", color=discord.Color.green())
             await interaction.response.send_message(embed=embed, ephemeral=True)
-        except: await interaction.response.send_message("❌ Erreur : ID numérique invalide.", ephemeral=True)
+        except: 
+            await interaction.response.send_message("❌ Erreur : ID numérique invalide.", ephemeral=True)
 
 class ModalNomTeam(discord.ui.Modal, title="Personnalisation Équipe ✏️"):
     num = discord.ui.TextInput(label="Numéro de la Team à modifier", placeholder="Ex: 1 (Main Roster), 2 (Team 2)...", max_length=1)
-    nom_s = discord.ui.TextInput(label="Nouveau nom du Salon textuel", placeholder="Ex: 🏅𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑🏅")
+    nom_s = discord.ui.TextInput(label="Nouveau nom du Salon textuel", placeholder="Ex: 🏅🇲 🇦 🇮 🇳  🇷 🇴 🇸 🇹 🇪 🇷 🏅")
     nom_r = discord.ui.TextInput(label="Nouveau nom du Rôle Discord", placeholder="Ex: Main Roster")
     async def on_submit(self, interaction: discord.Interaction):
         conf = obtenir_config_serveur(interaction.guild_id)
@@ -207,7 +211,6 @@ class FenetreCollerCode(discord.ui.Modal, title="Coller votre code"):
                 await rafraichir_partout(interaction.guild)
             else: await interaction.followup.send("❌ Structure de données corrompue.", ephemeral=True)
         except Exception as e: await interaction.followup.send(f"❌ Impossible de lire ce code : `{e}`", ephemeral=True)
-  
 
 # --- INTERFACES DES POPUPS CLASSEMENT ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
