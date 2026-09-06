@@ -327,14 +327,23 @@ class MenuDeroulantMotif(discord.ui.Select):
         super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        # 1. On dit tout de suite à Discord qu'on gère l'action pour éviter le timeout
+        await interaction.response.defer(ephemeral=True)
+        
         motif_selectionne = self.values if isinstance(self.values, list) else self.values
         guild = interaction.guild
         conf = obtenir_config_serveur(guild.id)
         
-        categorie = discord.utils.find(lambda c: c.name == "🎫 𝙏Ｉ𝘾𝙆𝙀𝙏" and isinstance(c, discord.CategoryChannel), guild.channels)
+        # Correction de la police d'écriture pour le mot "𝙏𝙄𝘾𝙆𝙀𝙏" (Lettre I corrigée)
+        nom_categorie_propre = "🎫 𝙏𝙄𝘾𝙆𝙀𝙏"
+        
+        categorie = discord.utils.find(lambda c: c.name == nom_categorie_propre and isinstance(c, discord.CategoryChannel), guild.channels)
         if not categorie:
-            try: categorie = await guild.create_category(name="🎫 𝙏Ｉ𝘾𝙆𝙀𝙏")
-            except: return
+            try: 
+                categorie = await guild.create_category(name=nom_categorie_propre)
+            except Exception as e:
+                await interaction.followup.send(f"❌ Impossible de créer la catégorie automatique : `{e}`", ephemeral=True)
+                return
 
         membre_createur = interaction.user
         overwrites = {
@@ -349,7 +358,8 @@ class MenuDeroulantMotif(discord.ui.Select):
         nom_salon = f"🎫-{motif_selectionne.lower().replace(' ', '-')}-{interaction.user.name}"
         try:
             salon_ticket = await guild.create_text_channel(name=nom_salon, category=categorie, overwrites=overwrites)
-            await interaction.response.send_message(f"✅ Ticket ouvert dans {salon_ticket.mention} !", ephemeral=True)
+            # On utilise followup.send car la réponse initiale a été différée
+            await interaction.followup.send(f"✅ Ticket ouvert dans {salon_ticket.mention} !", ephemeral=True)
 
             embed = discord.Embed(
                 title=f"🎫 Ticket - {motif_selectionne}",
@@ -358,7 +368,7 @@ class MenuDeroulantMotif(discord.ui.Select):
             )
             await salon_ticket.send(embed=embed, view=VueFermetureTicket())
         except Exception as e:
-            await interaction.response.send_message(f"❌ Échec de création : `{e}`", ephemeral=True)
+            await interaction.followup.send(f"❌ Échec de création du salon : `{e}`", ephemeral=True)
 
 class VueFermetureTicket(discord.ui.View):
     def __init__(self):
@@ -374,6 +384,7 @@ class VueFermetureTicket(discord.ui.View):
         await interaction.response.send_message("🔒 **Fermeture et suppression du salon dans 5 secondes.**")
         await asyncio.sleep(5)
         await interaction.channel.delete()
+
 # --- REFRESH ET RÔLES DYNAMIQUES PAR SERVEUR (SÉCURISÉ CONTRE LES CRASHS) ---
 async def rafraichir_partout(guild):
     global id_messages_principaux, id_salons_principaux, classements_par_serveur
