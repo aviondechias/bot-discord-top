@@ -366,6 +366,7 @@ class FenetreSuppression(discord.ui.Modal, title="Retirer un joueur"):
             await interaction.followup.send("❌ Retiré !", ephemeral=True)
             await rafraichir_partout(interaction.guild)
         except: pass
+
 async def rafraichir_partout(guild):
     global id_messages_principaux, id_salons_principaux, classements_par_serveur
     gid = guild.id
@@ -411,12 +412,33 @@ async def rafraichir_partout(guild):
         if not classements_par_serveur[gid]: texte_top += "*Aucun joueur dans le top pour le moment.*"
         for index, u_id in enumerate(classements_par_serveur[gid]): texte_top += f"**Top {index + 1}** : <@{u_id}>\n"
         
-        try:
-            msg = await salon_top.fetch_message(id_messages_principaux[gid])
-            await msg.edit(content=texte_top, view=VueControleTop())
-        except:
+        # Correction critique : On vérifie si la clé existe ET si l'ID n'est pas vide (None)
+        msg_envoye = False
+        if gid in id_messages_principaux and id_messages_principaux[gid]:
+            try:
+                msg = await salon_top.fetch_message(id_messages_principaux[gid])
+                await msg.edit(content=texte_top, view=VueControleTop())
+                msg_envoye = True
+            except:
+                pass
+                
+        if not msg_envoye:
             msg = await salon_top.send(content=texte_top, view=VueControleTop())
             id_messages_principaux[gid] = msg.id
+
+    for num_team in range(1, max_team + 1):
+        nom_salon_stylise = obtenir_nom_salon_team(guild, num_team)
+        salon_team = discord.utils.find(lambda c: normaliser_nom_salon(c.name) == normaliser_nom_salon(nom_salon_stylise), guild.channels)
+        if salon_team:
+            try: await salon_team.purge(limit=50)
+            except: pass
+            lignes = [f"**Top {i+1}** : <@{uid}>" for i, uid in enumerate(classements_par_serveur[gid]) if obtenir_equipe_et_salon_dynamique(gid, i+1) == num_team]
+            titre_affichage = "MAIN ROSTER" if num_team == 1 else f"Team {num_team}"
+            try:
+                if lignes: await salon_team.send(f"🏆 **Membres - {titre_affichage}** 🏆\n\n" + "\n".join(lignes))
+                else: await salon_team.send(f"Aucun joueur assigné au {titre_affichage} actuellement.")
+            except: pass
+
 # --- LOGIQUE DU MODE TOURNOI FLASH ---
 tournois_par_serveur = {}
 
