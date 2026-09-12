@@ -5,9 +5,8 @@ from flask import Flask
 from threading import Thread
 import os
 import json
-import base64
 
-# --- KEEP-ALIVE WEB SERVER ---
+# --- SERVEUR WEB KEEP-ALIVE ---
 app = Flask('')
 
 @app.route('/')
@@ -20,21 +19,21 @@ def run_web_server():
 def keep_alive():
     Thread(target=run_web_server).start()
 
-# --- BOT CONFIGURATION ---
+# --- CONFIGURATION BOT ---
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Multi-Server Data Separation Dictionaries
-classements_par_serveur = {}      # {guild_id: [liste_joueurs]}
+# Cloisonnement des données et configurations par ID de serveur (Multi-Serveur)
+classements_par_serveur = {}      # {guild_id: [liste_joueurs_ids]}
 id_messages_principaux = {}       # {guild_id: id_message}
 id_salons_principaux = {}         # {guild_id: id_salon}
 config_serveurs = {}              # {guild_id: {options_de_config}}
 
 FICHIER_CONFIG = "config_serveurs.json"
 
-# --- SYSTEME DE CONFIGURATION ISOLÉ ---
+# --- SYSTEME DE CONFIGURATION ---
 def charger_config_globale():
     if not os.path.exists(FICHIER_CONFIG): return {}
     try:
@@ -44,7 +43,6 @@ def charger_config_globale():
 def enregistrer_config_globale(data):
     with open(FICHIER_CONFIG, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-
 def obtenir_config_serveur(guild_id):
     global config_serveurs
     gid_str = str(guild_id)
@@ -94,7 +92,62 @@ def obtenir_equipe_et_salon_dynamique(guild_id, position):
 
 def normaliser_nom_salon(nom):
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
-  # --- PANEL DE CONFIGURATION PREMIUM DYNAMIQUE ---
+# --- PANEL DE SAUVEGARDE PAR COPIER-COLLER D'IDS BRUTS (ANTI-RESET) ---
+class VueDataOptions(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+
+    @discord.ui.button(label="GÉNÉRER UN CODE TEXTE 💾", style=discord.ButtonStyle.success)
+    async def btn_generer_code(self, interaction: discord.Interaction, button: discord.ui.Button):
+        gid = interaction.guild_id
+        top_actuel = classements_par_serveur.get(gid, [])
+        
+        if not top_actuel:
+            await interaction.response.send_message("⚠️ Le classement actuel est vide. Rien à sauvegarder.", ephemeral=True)
+            return
+            
+        # Création d'une suite de chiffres séparée par des virgules (Ex: id1,id2,id3)
+        code_ids_bruts = ",".join(str(uid) for uid in top_actuel)
+        
+        await interaction.response.send_message(
+            content=(
+                "💾 **Séquence unique de sauvegarde générée !**\n"
+                "Copiez la suite de chiffres ci-dessous. L'ordre correspond exactement à votre classement actuel. "
+                "Gardez-la de côté pour restaurer la progression si nécessaire :\n\n"
+                f"`{code_ids_bruts}`"
+            ),
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="RESTAURER VIA UN CODE 🔄", style=discord.ButtonStyle.danger)
+    async def btn_restaurer_code(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(FenetreCollerCode())
+
+class FenetreCollerCode(discord.ui.Modal, title="Restaurer le classement"):
+    code_entre = discord.ui.TextInput(label="Collez la suite de chiffres (IDs séparés par des virgules)", placeholder="Ex: 1529373902969770094,25901653...", style=discord.TextStyle.paragraph)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global classements_par_serveur
+        brut = self.code_entre.value.strip()
+        
+        if not brut:
+            await interaction.response.send_message("❌ Le champ est vide.", ephemeral=True)
+            return
+            
+        try:
+            await interaction.response.defer(ephemeral=True)
+            # Découpage des chiffres pour recréer la liste d'IDs
+            liste_ids = [int(uid.strip()) for uid in brut.split(",") if uid.strip().isdigit()]
+            
+            if liste_ids:
+                classements_par_serveur[interaction.guild_id] = list(liste_ids)
+                await interaction.followup.send("✅ **Restauration réussie !** Le classement a été mis à jour dans le bon ordre à partir de vos IDs.", ephemeral=True)
+                await rafraichir_partout(interaction.guild)
+            else:
+                await interaction.followup.send("❌ Code invalide ou mal copié. Aucun ID numérique trouvé.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Impossible de charger cette séquence : `{e}`", ephemeral=True)
+# --- PANEL DE CONFIGURATION PREMIUM DYNAMIQUE ---
 class VuePanelConfig(discord.ui.View):
     def __init__(self, guild_id):
         super().__init__(timeout=120)
@@ -112,17 +165,11 @@ class MenuDeroulantConfiguration(discord.ui.Select):
         super().__init__(placeholder="⚙️ Sélectionnez l'élément à configurer...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        choix = self.values[0] if isinstance(self.values, list) else self.values
-        
-        # Fixed: Modals are now sent as the immediate initial response, allowing the popup form to appear instantly
-        if choix == "taille": 
-            await interaction.response.send_modal(ModalTailleTeam())
-        elif choix == "role_admin": 
-            await interaction.response.send_modal(ModalRoleAdmin())
-        elif choix == "custom_team": 
-            await interaction.response.send_modal(ModalNomTeam())
-        elif choix == "motifs": 
-            await interaction.response.send_modal(ModalMotifsTickets())
+        choix = self.values if isinstance(self.values, list) else self.values
+        if choix == "taille": await interaction.response.send_modal(ModalTailleTeam())
+        elif choix == "role_admin": await interaction.response.send_modal(ModalRoleAdmin())
+        elif choix == "custom_team": await interaction.response.send_modal(ModalNomTeam())
+        elif choix == "motifs": await interaction.response.send_modal(ModalMotifsTickets())
 
 class ModalTailleTeam(discord.ui.Modal, title="Configuration Roster 👥"):
     taille = discord.ui.TextInput(label="Nombre max de joueurs dans le Main Roster", placeholder="Entrez un chiffre (Ex: 5 ou 6)", min_length=1, max_length=2)
@@ -132,8 +179,7 @@ class ModalTailleTeam(discord.ui.Modal, title="Configuration Roster 👥"):
             mettre_a_jour_config_serveur(interaction.guild_id, "taille_team", val)
             embed = discord.Embed(title="⚙️ Configuration Mise à Jour", description=f"La taille maximale du **Main Roster** a été fixée à **{val} joueurs**.", color=discord.Color.green())
             await interaction.response.send_message(embed=embed, ephemeral=True)
-        except: 
-            await interaction.response.send_message("❌ Erreur : Veuillez entrer un nombre entier valide.", ephemeral=True)
+        except: await interaction.response.send_message("❌ Erreur : Veuillez entrer un nombre entier valide.", ephemeral=True)
 
 class ModalRoleAdmin(discord.ui.Modal, title="Sécurité Staff 🛡️"):
     rid = discord.ui.TextInput(label="ID du rôle autorisé pour les commandes DATA", placeholder="Collez l'ID numérique ici")
@@ -143,12 +189,11 @@ class ModalRoleAdmin(discord.ui.Modal, title="Sécurité Staff 🛡️"):
             mettre_a_jour_config_serveur(interaction.guild_id, "role_admin_id", val)
             embed = discord.Embed(title="⚙️ Configuration Mise à Jour", description=f"Le rôle Admin de gestion a été lié avec succès à l'ID : `{val}`.", color=discord.Color.green())
             await interaction.response.send_message(embed=embed, ephemeral=True)
-        except: 
-            await interaction.response.send_message("❌ Erreur : ID numérique invalide.", ephemeral=True)
+        except: await interaction.response.send_message("❌ Erreur : ID numérique invalide.", ephemeral=True)
 
 class ModalNomTeam(discord.ui.Modal, title="Personnalisation Équipe ✏️"):
     num = discord.ui.TextInput(label="Numéro de la Team à modifier", placeholder="Ex: 1 (Main Roster), 2 (Team 2)...", max_length=1)
-    nom_s = discord.ui.TextInput(label="Nouveau nom du Salon textuel", placeholder="Ex: 🏅🇲 🇦 🇮 🇳  🇷 🇴 🇸 🇹 🇪 🇷 🏅")
+    nom_s = discord.ui.TextInput(label="Nouveau nom du Salon textuel", placeholder="Ex: 🏅𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑🏅")
     nom_r = discord.ui.TextInput(label="Nouveau nom du Rôle Discord", placeholder="Ex: Main Roster")
     async def on_submit(self, interaction: discord.Interaction):
         conf = obtenir_config_serveur(interaction.guild_id)
@@ -170,48 +215,6 @@ class ModalMotifsTickets(discord.ui.Modal, title="Menu des Tickets 🎫"):
         mettre_a_jour_config_serveur(interaction.guild_id, "motifs_tickets", liste)
         embed = discord.Embed(title="⚙️ Configuration Mise à Jour", description=f"Le menu déroulant des tickets propose désormais : `{', '.join(liste)}`.", color=discord.Color.green())
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# --- LOGIQUE DE SAUVEGARDE COPIER-COLLER PAR SERVEUR ---
-class VueDataOptions(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=60)
-
-    @discord.ui.button(label="GÉNÉRER UN CODE TEXTE 💾", style=discord.ButtonStyle.success)
-    async def btn_generer_code(self, interaction: discord.Interaction, button: discord.ui.Button):
-        gid = interaction.guild_id
-        top_actuel = classements_par_serveur.get(gid, [])
-        if not top_actuel:
-            await interaction.response.send_message("⚠️ Le classement actuel est vide. Impossible de générer un code.", ephemeral=True)
-            return
-        data_str = json.dumps(top_actuel)
-        code_bytes = base64.b64encode(data_str.encode('utf-8'))
-        code_securise = f"GT_DATA_{code_bytes.decode('utf-8')}"
-        await interaction.response.send_message(content=f"💾 **Code de Sauvegarde permanent généré avec succès !**\n\n`{code_securise}`", ephemeral=True)
-
-    @discord.ui.button(label="RESTAURER VIA UN CODE 🔄", style=discord.ButtonStyle.danger)
-    async def btn_restaurer_code(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(FenetreCollerCode())
-
-class FenetreCollerCode(discord.ui.Modal, title="Coller votre code"):
-    code_entre = discord.ui.TextInput(label="Collez le code de sauvegarde complet ici", placeholder="Ex: GT_DATA_...", style=discord.TextStyle.paragraph)
-    async def on_submit(self, interaction: discord.Interaction):
-        global classements_par_serveur
-        brut = self.code_entre.value.strip()
-        if not brut.startswith("GT_DATA_"):
-            await interaction.response.send_message("❌ Code invalide. Format requis : `GT_DATA_`.", ephemeral=True)
-            return
-        try:
-            await interaction.response.defer(ephemeral=True)
-            code_propre = brut.replace("GT_DATA_", "")
-            decoded_bytes = base64.b64decode(code_propre.encode('utf-8'))
-            liste_restauree = json.loads(decoded_bytes.decode('utf-8'))
-            if isinstance(liste_restauree, list):
-                classements_par_serveur[interaction.guild_id] = list(liste_restauree)
-                await interaction.followup.send("✅ **Restauration effectuée !** Le classement a été reconstruit.", ephemeral=True)
-                await rafraichir_partout(interaction.guild)
-            else: await interaction.followup.send("❌ Structure de données corrompue.", ephemeral=True)
-        except Exception as e: await interaction.followup.send(f"❌ Impossible de lire ce code : `{e}`", ephemeral=True)
-
 # --- INTERFACES DES POPUPS CLASSEMENT ---
 class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
     pos_depart = discord.ui.TextInput(label="Position actuelle", placeholder="Ex: 5")
@@ -290,12 +293,10 @@ class VueControleTop(discord.ui.View):
         embed = discord.Embed(title="🤖 Guide des commandes", color=discord.Color.gold())
         embed.add_field(name="🛠️ Commandes Admin", value="`!setup`, `!add @membre`, `!addmany @m1 @m2...`, `!remove @membre`, `!tstart`, `!twin`, `!setup_ticket`, `!config`", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-        
+
 # --- SECURE TICKET SYSTEM ---
 class VueCreationTicket(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
+    def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Créer un ticket 🎫", style=discord.ButtonStyle.primary, custom_id="btn_creer_ticket")
     async def bouton_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(content="📋 **Sélectionnez le motif de votre ticket :**", view=VueChoixMotifTicket(interaction.guild_id), ephemeral=True)
@@ -308,58 +309,42 @@ class VueChoixMotifTicket(discord.ui.View):
         self.add_item(MenuDeroulantMotif(options))
 
 class MenuDeroulantMotif(discord.ui.Select):
-    def __init__(self, options):
-        super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
-
+    def __init__(self, options): super().__init__(placeholder="Choisissez la raison du ticket...", options=options)
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        motif_selectionne = self.values[0] if isinstance(self.values, list) else self.values
+        motif_selectionne = self.values if isinstance(self.values, list) else self.values
         guild = interaction.guild
         conf = obtenir_config_serveur(guild.id)
         
         nom_categorie_propre = "🎫 𝙏𝙄𝘾𝙆𝙀𝙏"
         categorie = discord.utils.find(lambda c: c.name == nom_categorie_propre and isinstance(c, discord.CategoryChannel), guild.channels)
         if not categorie:
-            try:
-                categorie = await guild.create_category(name=nom_categorie_propre)
+            try: categorie = await guild.create_category(name=nom_categorie_propre)
             except Exception as e:
                 await interaction.followup.send(f"❌ Erreur catégorie : `{e}`", ephemeral=True)
                 return
 
-        # Explicitly fetches the server Member instance to secure correct object mapping permissions
-        try:
-            membre_createur = await guild.fetch_member(interaction.user.id)
-        except:
-            membre_createur = interaction.user
+        try: membre_createur = await guild.fetch_member(interaction.user.id)
+        except: membre_createur = interaction.user
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
             membre_createur: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, view_channel=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
         }
-        
         role_admin = guild.get_role(int(conf["role_admin_id"]))
-        if role_admin: 
-            overwrites[role_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
+        if role_admin: overwrites[role_admin] = discord.PermissionOverwrite(read_messages=True, send_messages=True, view_channel=True)
 
         nom_salon = f"🎫-{motif_selectionne.lower().replace(' ', '-')}-{interaction.user.name}"
         try:
             salon_ticket = await guild.create_text_channel(name=nom_salon, category=categorie, overwrites=overwrites)
             await interaction.followup.send(f"✅ Ticket ouvert dans {salon_ticket.mention} !", ephemeral=True)
-            
-            embed = discord.Embed(
-                title=f"🎫 Ticket - {motif_selectionne}", 
-                description=f"Bonjour {interaction.user.mention},\n\nMerci d'avoir ouvert un ticket pour : **{motif_selectionne}**.\nL'équipe administrative va vous prendre en charge. Veuillez décrire votre demande.", 
-                color=discord.Color.blue()
-            )
+            embed = discord.Embed(title=f"🎫 Ticket - {motif_selectionne}", description=f"Bonjour {interaction.user.mention},\n\nMerci d'avoir ouvert un ticket pour : **{motif_selectionne}**.\nL'équipe administrative va vous prendre en charge. Veuillez décrire votre demande.", color=discord.Color.blue())
             await salon_ticket.send(embed=embed, view=VueFermetureTicket())
-        except Exception as e: 
-            await interaction.followup.send(f"❌ Échec de création du salon : `{e}`", ephemeral=True)
+        except Exception as e: await interaction.followup.send(f"❌ Échec de création : `{e}`", ephemeral=True)
 
 class VueFermetureTicket(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
+    def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="Fermer le ticket 🔒", style=discord.ButtonStyle.danger, custom_id="btn_fermer_ticket")
     async def bouton_fermer(self, interaction: discord.Interaction, button: discord.ui.Button):
         conf = obtenir_config_serveur(interaction.guild_id)
@@ -370,7 +355,6 @@ class VueFermetureTicket(discord.ui.View):
         await interaction.response.send_message("🔒 **Fermeture et suppression du salon dans 5 secondes.**")
         await asyncio.sleep(5)
         await interaction.channel.delete()
-
 # --- REFRESH ET RÔLES DYNAMIQUES PAR SERVEUR (SÉCURISÉ CONTRE LES CRASHS) ---
 async def rafraichir_partout(guild):
     global id_messages_principaux, id_salons_principaux, classements_par_serveur
@@ -477,11 +461,13 @@ class VueInscriptionTournoi(discord.ui.View):
         else: await interaction.message.edit(content=generer_affichage_tournoi(gid), view=self)
         await interaction.response.defer()
 
-# --- COMMANDES ADMIN TEXTUELLES ---
+# --- COMMANDES ADMIN ---
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
 async def initialiser_salon_top(ctx):
-    global id_salons_principaux, id_messages_principaux
+    global id_salons_principaux, id_messages_principaux, classements_par_serveur
+    # Réinitialise TOUJOURS à un classement vierge
+    classements_par_serveur[ctx.guild.id] = []
     id_salons_principaux[ctx.guild.id] = ctx.channel.id
     id_messages_principaux[ctx.guild.id] = None
     await ctx.message.delete()
