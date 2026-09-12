@@ -92,7 +92,6 @@ def obtenir_equipe_et_salon_dynamique(guild_id, position):
 
 def normaliser_nom_salon(nom):
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
-
 # --- PANEL DE SAUVEGARDE PAR COPIER-COLLER D'IDS BRUTS (ANTI-RESET) ---
 class VueDataOptions(discord.ui.View):
     def __init__(self):
@@ -107,14 +106,12 @@ class VueDataOptions(discord.ui.View):
             await interaction.response.send_message("⚠️ Le classement actuel est vide. Rien à sauvegarder.", ephemeral=True)
             return
             
-        # Création d'une suite de chiffres séparée par des virgules (Ex: id1,id2,id3)
         code_ids_bruts = ",".join(str(uid) for uid in top_actuel)
         
         await interaction.response.send_message(
             content=(
                 "💾 **Séquence unique de sauvegarde générée !**\n"
-                "Copiez la suite de chiffres ci-dessous. L'ordre correspond exactement à votre classement actuel. "
-                "Gardez-la de côté pour restaurer la progression si nécessaire :\n\n"
+                "Copiez la suite de chiffres ci-dessous. L'ordre correspond exactement à votre classement actuel :\n\n"
                 f"`{code_ids_bruts}`"
             ),
             ephemeral=True
@@ -136,28 +133,21 @@ class FenetreCollerCode(discord.ui.Modal, title="Restaurer le classement"):
             return
             
         try:
-            # 1. On dit tout de suite à Discord qu'on prend en charge l'action pour bloquer l'erreur de timeout
-            await interaction.response.defer(ephemeral=True)
-            
-            # Découpage des chiffres pour recréer la liste d'IDs
             liste_ids = [int(uid.strip()) for uid in brut.split(",") if uid.strip().isdigit()]
             
             if liste_ids:
                 classements_par_serveur[interaction.guild_id] = list(liste_ids)
-                # 2. On utilise followup.send car la réponse initiale a été différée
-                await interaction.followup.send("✅ **Séquence chargée !** Reconstitution complète du classement et mise à jour des rôles en cours...", ephemeral=True)
                 
-                # 3. Lancement du gros traitement lourd sans bloquer l'interface Discord
-                await rafraichir_partout(interaction.guild)
+                # Réponse instantanée pour fermer proprement la passerelle Discord (ZÉRO TIMEOUT)
+                await interaction.response.send_message("✅ **Séquence acceptée !** Le bot met à jour les salons et les rôles en arrière-plan...", ephemeral=True)
+                
+                # CRITIQUE : Lance la mise à jour lourde de manière isolée en tâche de fond
+                asyncio.create_task(rafraichir_partout(interaction.guild))
             else:
-                await interaction.followup.send("❌ Code invalide ou mal copié. Aucun ID numérique trouvé.", ephemeral=True)
+                await interaction.response.send_message("❌ Séquence invalide. Aucun ID numérique trouvé.", ephemeral=True)
         except Exception as e:
-            try:
-                await interaction.followup.send(f"❌ Impossible de charger cette séquence : `{e}`", ephemeral=True)
-            except:
-                pass
-
-
+            await interaction.response.send_message(f"❌ Impossible de charger cette séquence : `{e}`", ephemeral=True)
+# --- PANEL DE CONFIGURATION PREMIUM DYNAMIQUE ---
 class VuePanelConfig(discord.ui.View):
     def __init__(self, guild_id):
         super().__init__(timeout=120)
@@ -203,7 +193,7 @@ class ModalRoleAdmin(discord.ui.Modal, title="Sécurité Staff 🛡️"):
 
 class ModalNomTeam(discord.ui.Modal, title="Personnalisation Équipe ✏️"):
     num = discord.ui.TextInput(label="Numéro de la Team à modifier", placeholder="Ex: 1 (Main Roster), 2 (Team 2)...", max_length=1)
-    nom_s = discord.ui.TextInput(label="Nouveau nom du Salon textuel", placeholder="Ex: 🏅𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑🏅")
+    nom_s = discord.ui.TextInput(label="Nouveau nom du Salon textuel", placeholder="Ex: 🏅🇲 🇦 🇮 🇳  🇷 🇴 🇸 🇹 🇪 🇷 🏅")
     nom_r = discord.ui.TextInput(label="Nouveau nom du Rôle Discord", placeholder="Ex: Main Roster")
     async def on_submit(self, interaction: discord.Interaction):
         conf = obtenir_config_serveur(interaction.guild_id)
@@ -241,7 +231,7 @@ class FenetreDeplacement(discord.ui.Modal, title="Changer la place (Décaler)"):
             joueur_id = classements_par_serveur[gid].pop(p_dep)
             classements_par_serveur[gid].insert(p_arr, joueur_id)
             await interaction.followup.send("📈 Déplacement effectué !", ephemeral=True)
-            await rafraichir_partout(interaction.guild)
+            asyncio.create_task(rafraichir_partout(interaction.guild))
         except: pass
 
 class FenetreEchange(discord.ui.Modal, title="Échanger 2 places"):
@@ -256,7 +246,7 @@ class FenetreEchange(discord.ui.Modal, title="Échanger 2 places"):
             await interaction.response.defer(ephemeral=True)
             classements_par_serveur[gid][p1], classements_par_serveur[gid][p2] = classements_par_serveur[gid][p2], classements_par_serveur[gid][p1]
             await interaction.followup.send("🔄 Échange effectué !", ephemeral=True)
-            await rafraichir_partout(interaction.guild)
+            asyncio.create_task(rafraichir_partout(interaction.guild))
         except: pass
 
 class FenetreSuppression(discord.ui.Modal, title="Retirer un joueur"):
@@ -269,7 +259,7 @@ class FenetreSuppression(discord.ui.Modal, title="Retirer un joueur"):
             await interaction.response.defer(ephemeral=True)
             classements_par_serveur[gid].pop(p)
             await interaction.followup.send("❌ Retiré !", ephemeral=True)
-            await rafraichir_partout(interaction.guild)
+            asyncio.create_task(rafraichir_partout(interaction.guild))
         except: pass
 
 class VueControleTop(discord.ui.View):
@@ -476,7 +466,6 @@ class VueInscriptionTournoi(discord.ui.View):
 @commands.has_permissions(administrator=True)
 async def initialiser_salon_top(ctx):
     global id_salons_principaux, id_messages_principaux, classements_par_serveur
-    # Réinitialise TOUJOURS à un classement vierge
     classements_par_serveur[ctx.guild.id] = []
     id_salons_principaux[ctx.guild.id] = ctx.channel.id
     id_messages_principaux[ctx.guild.id] = None
