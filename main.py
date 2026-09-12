@@ -92,6 +92,7 @@ def obtenir_equipe_et_salon_dynamique(guild_id, position):
 
 def normaliser_nom_salon(nom):
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
+
 # --- PANEL DE SAUVEGARDE PAR COPIER-COLLER D'IDS BRUTS (ANTI-RESET) ---
 class VueDataOptions(discord.ui.View):
     def __init__(self):
@@ -124,7 +125,7 @@ class VueDataOptions(discord.ui.View):
         await interaction.response.send_modal(FenetreCollerCode())
 
 class FenetreCollerCode(discord.ui.Modal, title="Restaurer le classement"):
-    code_entre = discord.ui.TextInput(label="Collez la suite de chiffres (IDs séparés par des virgules)", placeholder="Ex: 1529373902969770094,25901653...", style=discord.TextStyle.paragraph)
+    code_entre = discord.ui.TextInput(label="Collez la suite de chiffres (IDs avec virgules)", placeholder="Ex: 1529373902969770094,25901653...", style=discord.TextStyle.paragraph)
 
     async def on_submit(self, interaction: discord.Interaction):
         global classements_par_serveur
@@ -135,19 +136,28 @@ class FenetreCollerCode(discord.ui.Modal, title="Restaurer le classement"):
             return
             
         try:
+            # 1. On dit tout de suite à Discord qu'on prend en charge l'action pour bloquer l'erreur de timeout
             await interaction.response.defer(ephemeral=True)
+            
             # Découpage des chiffres pour recréer la liste d'IDs
             liste_ids = [int(uid.strip()) for uid in brut.split(",") if uid.strip().isdigit()]
             
             if liste_ids:
                 classements_par_serveur[interaction.guild_id] = list(liste_ids)
-                await interaction.followup.send("✅ **Restauration réussie !** Le classement a été mis à jour dans le bon ordre à partir de vos IDs.", ephemeral=True)
+                # 2. On utilise followup.send car la réponse initiale a été différée
+                await interaction.followup.send("✅ **Séquence chargée !** Reconstitution complète du classement et mise à jour des rôles en cours...", ephemeral=True)
+                
+                # 3. Lancement du gros traitement lourd sans bloquer l'interface Discord
                 await rafraichir_partout(interaction.guild)
             else:
                 await interaction.followup.send("❌ Code invalide ou mal copié. Aucun ID numérique trouvé.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Impossible de charger cette séquence : `{e}`", ephemeral=True)
-# --- PANEL DE CONFIGURATION PREMIUM DYNAMIQUE ---
+            try:
+                await interaction.followup.send(f"❌ Impossible de charger cette séquence : `{e}`", ephemeral=True)
+            except:
+                pass
+
+
 class VuePanelConfig(discord.ui.View):
     def __init__(self, guild_id):
         super().__init__(timeout=120)
