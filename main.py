@@ -5,7 +5,6 @@ from flask import Flask
 from threading import Thread
 import os
 import json
-import base64
 
 # --- KEEP-ALIVE WEB SERVER ---
 app = Flask('')
