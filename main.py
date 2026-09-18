@@ -6,7 +6,7 @@ from threading import Thread
 import os
 import json
 
-# --- KEEP-ALIVE WEB SERVER ---
+# --- SERVEUR WEB KEEP-ALIVE ---
 app = Flask('')
 
 @app.route('/')
@@ -19,31 +19,19 @@ def run_web_server():
 def keep_alive():
     Thread(target=run_web_server).start()
 
-# --- BOT CONFIGURATION ---
+# --- CONFIGURATION BOT ---
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Multi-Server Data Separation Dictionaries
-classements_par_serveur = {}      # {guild_id: [liste_joueurs]}
+# Cloisonnement des données et configurations par ID de serveur (Multi-Serveur)
+classements_par_serveur = {}      # {guild_id: [liste_joueurs_ids]}
 id_messages_principaux = {}       # {guild_id: id_message}
 id_salons_principaux = {}         # {guild_id: id_salon}
 config_serveurs = {}              # {guild_id: {options_de_config}}
 
 FICHIER_CONFIG = "config_serveurs.json"
-
-# --- SYSTEME DE CONFIGURATION ISOLÉ ---
-def charger_config_globale():
-    if not os.path.exists(FICHIER_CONFIG): return {}
-    try:
-        with open(FICHIER_CONFIG, "r", encoding="utf-8") as f: return json.load(f)
-    except: return {}
-
-def enregistrer_config_globale(data):
-    with open(FICHIER_CONFIG, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
 def obtenir_config_serveur(guild_id):
     global config_serveurs
     gid_str = str(guild_id)
@@ -93,6 +81,30 @@ def obtenir_equipe_et_salon_dynamique(guild_id, position):
 
 def normaliser_nom_salon(nom):
     return nom.lower().replace("-", "").replace(" ", "").replace("\ufe0f", "")
+
+# --- SYSTEME DE CONFIGURATION (SÉCURISÉ) ---
+def charger_config_globale():
+    # Sécurité critique : Crée le fichier s'il a été effacé par le redémarrage de Render
+    if not os.path.exists(FICHIER_CONFIG):
+        try:
+            with open(FICHIER_CONFIG, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            return {}
+        except:
+            return {}
+    try:
+        with open(FICHIER_CONFIG, "r", encoding="utf-8") as f: 
+            return json.load(f)
+    except: 
+        return {}
+
+def enregistrer_config_globale(data):
+    try:
+        with open(FICHIER_CONFIG, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except:
+        pass
+
   # --- PANEL DE CONFIGURATION PREMIUM DYNAMIQUE ---
 class VuePanelConfig(discord.ui.View):
     def __init__(self, guild_id):
