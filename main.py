@@ -1,37 +1,33 @@
 import discord
 from discord.ext import commands
+import asyncio
 from flask import Flask
 from threading import Thread
-import asyncio
 import os
 import json
-import traceback
-
 
 # ============================================================
-# KEEP ALIVE / RENDER
+# KEEP-ALIVE WEB SERVER
 # ============================================================
 
-app = Flask(__name__)
+app = Flask('')
 
 
-@app.route("/")
+@app.route('/')
 def home():
     return "Bot de classement actif !"
 
 
 def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host='0.0.0.0', port=10000)
 
 
 def keep_alive():
-    thread = Thread(target=run_web_server, daemon=True)
-    thread.start()
+    Thread(target=run_web_server, daemon=True).start()
 
 
 # ============================================================
-# BOT
+# BOT CONFIGURATION
 # ============================================================
 
 intents = discord.Intents.default()
@@ -40,661 +36,305 @@ intents.message_content = True
 
 bot = commands.Bot(
     command_prefix="!",
-    intents=intents,
-    help_command=None
+    intents=intents
 )
 
+# ============================================================
+# DONNÉES
+# ============================================================
 
-# ============================================================
-# VARIABLES
-# ============================================================
+classements_par_serveur = {}
+id_messages_principaux = {}
+id_salons_principaux = {}
+config_serveurs = {}
 
 FICHIER_CONFIG = "config_serveurs.json"
 
-config_serveurs = {}
-classements_par_serveur = {}
 
-id_messages_principaux = {}
-id_salons_principaux = {}
+# ============================================================
+# CONFIGURATION SERVEUR
+# ============================================================
 
-verrous_rafraichissement = {}
+def charger_config_globale():
+    if not os.path.exists(FICHIER_CONFIG):
+        try:
+            with open(FICHIER_CONFIG, "w", encoding="utf-8") as f:
+                json.dump({}, f, ensure_ascii=False, indent=4)
 
-vues_chargees = False
+            return {}
+
+        except Exception:
+            return {}
+
+    try:
+        with open(FICHIER_CONFIG, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    except Exception:
+        return {}
+
+
+def enregistrer_config_globale(data):
+    try:
+        with open(FICHIER_CONFIG, "w", encoding="utf-8") as f:
+            json.dump(
+                data,
+                f,
+                ensure_ascii=False,
+                indent=4
+            )
+
+    except Exception:
+        pass
 
 
 # ============================================================
-# NOMS PAR DÉFAUT
+# CONFIGURATION PAR DÉFAUT
 # ============================================================
 
-def nom_salon_par_defaut(numero):
-    noms = {
-        1: "🏅︱𝐌𝐀𝐈𝐍-𝐑𝐎𝐒𝐓𝐄𝐑🏅",
-        2: "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈",
-        3: "🥉︱𝐓𝐄𝐀𝐌-𝟑🥉",
-        4: "🎖︱𝐓𝐄𝐀𝐌-𝟒🎖",
-        5: "🏆︱𝐓𝐄𝐀𝐌-𝟓🏆",
-        6: "🎗︱𝐓𝐄𝐀𝐌-𝟔🎗",
-        7: "✨︱𝐓𝐄𝐀𝐌-𝟕✨",
-        8: "🎫︱𝐓𝐄𝐀𝐌-𝟖🎫",
-    }
+def configuration_par_defaut():
 
-    return noms.get(numero, f"💫︱𝐓𝐄𝐀𝐌-{numero}💫")
-
-
-def nom_role_par_defaut(numero):
-    if numero == 1:
-        return "Main Roster"
-
-    return f"Team {numero}"
-
-
-# ============================================================
-# CONFIG PAR DÉFAUT
-# ============================================================
-
-def creer_config_par_defaut():
     teams = {}
 
-    # On commence avec 3 teams.
-    # Il n'y a AUCUNE limite à 3 dans le système.
-    for numero in range(1, 4):
-        teams[str(numero)] = {
-            "nom_salon": nom_salon_par_defaut(numero),
-            "nom_role": nom_role_par_defaut(numero),
-            "max_joueurs": 5,
-            "role_id": None,
-            "channel_id": None,
-            "message_id": None
+    # Team 1 à Team 3 par défaut
+    for i in range(1, 4):
+
+        if i == 1:
+            nom_salon = "🏅𝐌𝐀𝐈𝐍 𝐑𝐎𝐒𝐓𝐄𝐑🏅"
+            nom_role = "Main Roster"
+
+        elif i == 2:
+            nom_salon = "🥈︱𝐓𝐄𝐀𝐌-𝟐🥈"
+            nom_role = "Team 2"
+
+        else:
+            nom_salon = f"🥉︱𝐓𝐄𝐀𝐌-𝟑🥉"
+            nom_role = "Team 3"
+
+        teams[str(i)] = {
+            "nom": nom_salon,
+            "role": nom_role,
+            "max": 5
         }
 
     return {
         "role_admin_id": 1529373902969770094,
-        "taille_team": 5,
-
         "teams": teams,
-
         "motifs_tickets": [
             "Admin",
             "Test Team",
             "Tryout"
-        ],
-
-        "classement": [],
-
-        "top_channel_id": None,
-        "top_message_id": None
+        ]
     }
 
 
 # ============================================================
-# NORMALISATION / MIGRATION ANCIENNE CONFIG
+# MIGRATION ANCIENNE CONFIG
 # ============================================================
 
-def normaliser_config(config):
+def migrer_ancienne_configuration(config):
     """
-    Convertit automatiquement l'ancienne structure :
+    Transforme automatiquement l'ancienne configuration :
 
-        noms_salons
-        noms_roles
-        taille_team
+    noms_salons
+    noms_roles
+    taille_team
 
-    vers la nouvelle structure :
+    vers :
 
-        teams = {
-            "1": {
-                "nom_salon": "...",
-                "nom_role": "...",
-                "max_joueurs": 5
-            }
+    teams = {
+        "1": {
+            "nom": "...",
+            "role": "...",
+            "max": 5
         }
-
-    Cela permet de garder les anciennes données.
+    }
     """
 
-    if not isinstance(config, dict):
-        config = creer_config_par_defaut()
+    if "teams" in config:
+        return config
 
-    # --------------------------------------------------------
-    # Si l'ancienne config n'a pas encore "teams"
-    # --------------------------------------------------------
-
-    if not isinstance(config.get("teams"), dict):
-        anciens_salons = config.get("noms_salons", {})
-        anciens_roles = config.get("noms_roles", {})
-
-        taille_generale = int(config.get("taille_team", 5))
-
-        numeros = set()
-
-        for cle in anciens_salons.keys():
-            try:
-                numeros.add(int(cle))
-            except Exception:
-                pass
-
-        for cle in anciens_roles.keys():
-            try:
-                numeros.add(int(cle))
-            except Exception:
-                pass
-
-        if not numeros:
-            numeros = {1, 2, 3}
-
-        numeros.update({1, 2, 3})
-
-        teams = {}
-
-        for numero in sorted(numeros):
-            cle = str(numero)
-
-            teams[cle] = {
-                "nom_salon": anciens_salons.get(
-                    cle,
-                    nom_salon_par_defaut(numero)
-                ),
-
-                "nom_role": anciens_roles.get(
-                    cle,
-                    nom_role_par_defaut(numero)
-                ),
-
-                "max_joueurs": (
-                    taille_generale
-                    if numero == 1
-                    else 5
-                ),
-
-                "role_id": None,
-                "channel_id": None,
-                "message_id": None
-            }
-
-        config["teams"] = teams
-
-    # --------------------------------------------------------
-    # Vérification des teams existantes
-    # --------------------------------------------------------
-
-    teams = config.setdefault("teams", {})
-
-    for cle, team in list(teams.items()):
-
-        if not isinstance(team, dict):
-            teams[cle] = {
-                "nom_salon": nom_salon_par_defaut(int(cle)),
-                "nom_role": nom_role_par_defaut(int(cle)),
-                "max_joueurs": 5,
-                "role_id": None,
-                "channel_id": None,
-                "message_id": None
-            }
-
-            continue
-
-        try:
-            numero = int(cle)
-        except Exception:
-            continue
-
-        team.setdefault(
-            "nom_salon",
-            nom_salon_par_defaut(numero)
-        )
-
-        team.setdefault(
-            "nom_role",
-            nom_role_par_defaut(numero)
-        )
-
-        team.setdefault("max_joueurs", 5)
-        team.setdefault("role_id", None)
-        team.setdefault("channel_id", None)
-        team.setdefault("message_id", None)
-
-        try:
-            team["max_joueurs"] = max(
-                1,
-                int(team["max_joueurs"])
-            )
-        except Exception:
-            team["max_joueurs"] = 5
-
-    config.setdefault("motifs_tickets", [
-        "Admin",
-        "Test Team",
-        "Tryout"
-    ])
-
-    config.setdefault("classement", [])
-
-    config.setdefault("top_channel_id", None)
-    config.setdefault("top_message_id", None)
-
-    # Ancien champ gardé pour compatibilité.
-    config["taille_team"] = int(
+    ancienne_taille = int(
         config.get("taille_team", 5)
     )
 
-    return config
+    anciens_salons = config.get(
+        "noms_salons",
+        {}
+    )
 
+    anciens_roles = config.get(
+        "noms_roles",
+        {}
+    )
 
-# ============================================================
-# CHARGEMENT JSON
-# ============================================================
+    teams = {}
 
-def charger_configs():
-    global config_serveurs
+    nombres_equipes = max(
+        len(anciens_salons),
+        len(anciens_roles),
+        3
+    )
 
-    if not os.path.exists(FICHIER_CONFIG):
-        config_serveurs = {}
-        sauvegarder_configs()
-        return
+    for i in range(1, nombres_equipes + 1):
 
-    try:
-        with open(
-            FICHIER_CONFIG,
-            "r",
-            encoding="utf-8"
-        ) as fichier:
+        numero = str(i)
 
-            donnees = json.load(fichier)
-
-            if not isinstance(donnees, dict):
-                donnees = {}
-
-            config_serveurs = donnees
-
-        # Normalisation
-        modifie = False
-
-        for guild_id in list(config_serveurs.keys()):
-            ancienne = config_serveurs[guild_id]
-
-            nouvelle = normaliser_config(ancienne)
-
-            if nouvelle != ancienne:
-                config_serveurs[guild_id] = nouvelle
-                modifie = True
-
-        if modifie:
-            sauvegarder_configs()
-
-    except Exception as erreur:
-        print("❌ Impossible de charger le fichier JSON.")
-        print(erreur)
-
-        config_serveurs = {}
-
-
-def sauvegarder_configs():
-    try:
-        temporaire = FICHIER_CONFIG + ".tmp"
-
-        with open(
-            temporaire,
-            "w",
-            encoding="utf-8"
-        ) as fichier:
-
-            json.dump(
-                config_serveurs,
-                fichier,
-                indent=4,
-                ensure_ascii=False
-            )
-
-        os.replace(
-            temporaire,
-            FICHIER_CONFIG
+        nom_salon = anciens_salons.get(
+            numero,
+            f"💫︱𝐓𝐄𝐀𝐌-{i}💫"
         )
 
-    except Exception as erreur:
-        print("❌ Erreur sauvegarde JSON :", erreur)
+        nom_role = anciens_roles.get(
+            numero,
+            f"Team {i}"
+        )
 
+        teams[numero] = {
+            "nom": nom_salon,
+            "role": nom_role,
+            "max": ancienne_taille
+        }
 
-# ============================================================
-# CONFIG SERVEUR
-# ============================================================
+    nouvelle_config = {
+        "role_admin_id": config.get(
+            "role_admin_id",
+            1529373902969770094
+        ),
+        "teams": teams,
+        "motifs_tickets": config.get(
+            "motifs_tickets",
+            ["Admin", "Test Team", "Tryout"]
+        )
+    }
+
+    return nouvelle_config
+
 
 def obtenir_config_serveur(guild_id):
 
-    cle = str(guild_id)
+    global config_serveurs
 
-    if cle not in config_serveurs:
-        config_serveurs[cle] = creer_config_par_defaut()
-        sauvegarder_configs()
+    gid_str = str(guild_id)
 
-    config_serveurs[cle] = normaliser_config(
-        config_serveurs[cle]
+    configs = charger_config_globale()
+
+    if gid_str not in configs:
+
+        configs[gid_str] = configuration_par_defaut()
+
+        enregistrer_config_globale(
+            configs
+        )
+
+    else:
+
+        ancienne = configs[gid_str]
+
+        nouvelle = migrer_ancienne_configuration(
+            ancienne
+        )
+
+        configs[gid_str] = nouvelle
+
+        if nouvelle != ancienne:
+            enregistrer_config_globale(
+                configs
+            )
+
+    config_serveurs[guild_id] = configs[gid_str]
+
+    return configs[gid_str]
+
+
+def mettre_a_jour_config_serveur(
+    guild_id,
+    cle,
+    valeur
+):
+
+    configs = charger_config_globale()
+
+    gid_str = str(guild_id)
+
+    if gid_str not in configs:
+        configs[gid_str] = configuration_par_defaut()
+
+    configs[gid_str][cle] = valeur
+
+    enregistrer_config_globale(
+        configs
     )
 
-    return config_serveurs[cle]
-
-
-def sauvegarder_config_serveur(guild_id):
-    config = obtenir_config_serveur(guild_id)
-
-    config_serveurs[str(guild_id)] = config
-
-    sauvegarder_configs()
+    config_serveurs[guild_id] = configs[gid_str]
 
 
 # ============================================================
-# TEAMS
+# GESTION DYNAMIQUE DES TEAMS
 # ============================================================
 
 def obtenir_teams(guild_id):
 
-    config = obtenir_config_serveur(guild_id)
+    conf = obtenir_config_serveur(
+        guild_id
+    )
 
-    teams = []
-
-    for cle, team in config.get("teams", {}).items():
-
-        try:
-            numero = int(cle)
-        except Exception:
-            continue
-
-        teams.append(
-            (numero, team)
-        )
-
-    teams.sort(key=lambda x: x[0])
-
-    return teams
+    return conf.get(
+        "teams",
+        {}
+    )
 
 
 def obtenir_team(guild_id, numero):
 
-    config = obtenir_config_serveur(guild_id)
+    teams = obtenir_teams(
+        guild_id
+    )
 
-    return config["teams"].get(str(numero))
+    return teams.get(
+        str(numero)
+    )
 
 
-def obtenir_nom_role_team(guild_id, numero):
+def obtenir_nom_salon_team(
+    guild,
+    numero
+):
 
     team = obtenir_team(
-        guild_id,
+        guild.id,
         numero
     )
 
     if team:
         return team.get(
-            "nom_role",
-            nom_role_par_defaut(numero)
+            "nom",
+            f"💫︱𝐓𝐄𝐀𝐌-{numero}💫"
         )
 
-    return nom_role_par_defaut(numero)
+    return f"💫︱𝐓𝐄𝐀𝐌-{numero}💫"
 
 
-def obtenir_nom_salon_team(guild_id, numero):
+def obtenir_nom_role_team(
+    guild,
+    numero
+):
 
     team = obtenir_team(
-        guild_id,
+        guild.id,
         numero
     )
 
     if team:
         return team.get(
-            "nom_salon",
-            nom_salon_par_defaut(numero)
+            "role",
+            f"Team {numero}"
         )
 
-    return nom_salon_par_defaut(numero)
+    return f"Team {numero}"
 
 
-def obtenir_max_team(guild_id, numero):
-
-    team = obtenir_team(
-        guild_id,
-        numero
-    )
-
-    if not team:
-        return 5
-
-    try:
-        return max(
-            1,
-            int(team.get("max_joueurs", 5))
-        )
-
-    except Exception:
-        return 5
-
-
-# ============================================================
-# CALCUL DE TEAM
-# ============================================================
-
-def obtenir_equipe_et_salon_dynamique(
-    guild_id,
-    position
-):
-    """
-    Trouve la team correspondant à la position
-    dans le classement.
-
-    Exemple :
-
-    Team 1 = 5
-    Team 2 = 5
-    Team 3 = 5
-
-    position 1-5  -> Team 1
-    position 6-10 -> Team 2
-    position 11-15 -> Team 3
-
-    Fonctionne avec 50, 100 ou davantage de teams.
-    """
-
-    if position <= 0:
-        return None
-
-    cumul = 0
-
-    for numero, team in obtenir_teams(guild_id):
-
-        try:
-            maximum = max(
-                1,
-                int(team.get("max_joueurs", 5))
-            )
-
-        except Exception:
-            maximum = 5
-
-        cumul += maximum
-
-        if position <= cumul:
-            return numero
-
-    # Toutes les teams sont pleines.
-    return None
-
-
-# ============================================================
-# NORMALISATION NOM SALON
-# ============================================================
-
-def normaliser_nom_salon(nom):
-
-    return (
-        str(nom)
-        .lower()
-        .replace("-", "")
-        .replace("_", "")
-        .replace(" ", "")
-        .replace("\ufe0f", "")
-    )
-
-
-# ============================================================
-# TROUVER / CRÉER LE ROLE
-# ============================================================
-
-async def obtenir_ou_creer_role(
-    guild,
-    numero,
-    team
-):
-
-    nom_desire = team["nom_role"]
-
-    role = None
-
-    # Priorité à l'ID enregistré
-    role_id = team.get("role_id")
-
-    if role_id:
-        try:
-            role = guild.get_role(
-                int(role_id)
-            )
-        except Exception:
-            role = None
-
-    # Recherche par nom
-    if role is None:
-        role = discord.utils.get(
-            guild.roles,
-            name=nom_desire
-        )
-
-    # Création
-    if role is None:
-
-        try:
-            role = await guild.create_role(
-                name=nom_desire,
-                reason="Création automatique d'une équipe"
-            )
-
-        except discord.Forbidden:
-            print(
-                f"❌ Impossible de créer le rôle Team {numero}"
-            )
-            return None
-
-        except discord.HTTPException as erreur:
-            print(
-                f"❌ Erreur création rôle Team {numero}:",
-                erreur
-            )
-            return None
-
-    # Renommage si nécessaire
-    elif role.name != nom_desire:
-
-        try:
-            await role.edit(
-                name=nom_desire,
-                reason="Mise à jour configuration équipe"
-            )
-
-        except discord.Forbidden:
-            print(
-                f"⚠️ Impossible de renommer le rôle Team {numero}"
-            )
-
-        except discord.HTTPException:
-            pass
-
-    team["role_id"] = role.id
-
-    return role
-
-
-# ============================================================
-# TROUVER / CRÉER LE SALON
-# ============================================================
-
-async def obtenir_ou_creer_salon(
-    guild,
-    numero,
-    team
-):
-
-    nom_desire = team["nom_salon"]
-
-    salon = None
-
-    channel_id = team.get("channel_id")
-
-    # Priorité à l'ID enregistré
-    if channel_id:
-
-        try:
-            salon = guild.get_channel(
-                int(channel_id)
-            )
-        except Exception:
-            salon = None
-
-    # Recherche par nom
-    if salon is None:
-
-        for channel in guild.text_channels:
-
-            if (
-                normaliser_nom_salon(channel.name)
-                ==
-                normaliser_nom_salon(nom_desire)
-            ):
-                salon = channel
-                break
-
-    # Création
-    if salon is None:
-
-        try:
-            salon = await guild.create_text_channel(
-                name=nom_desire,
-                reason="Création automatique d'une équipe"
-            )
-
-        except discord.Forbidden:
-            print(
-                f"❌ Impossible de créer le salon Team {numero}"
-            )
-            return None
-
-        except discord.HTTPException as erreur:
-            print(
-                f"❌ Erreur création salon Team {numero}:",
-                erreur
-            )
-            return None
-
-    # Renommage
-    elif salon.name != nom_desire:
-
-        try:
-            await salon.edit(
-                name=nom_desire,
-                reason="Mise à jour configuration équipe"
-            )
-
-        except discord.Forbidden:
-            print(
-                f"⚠️ Impossible de renommer le salon Team {numero}"
-            )
-
-        except discord.HTTPException:
-            pass
-
-    team["channel_id"] = salon.id
-
-    return salon
-
-
-# ============================================================
-# EMBED TEAM
-# ============================================================
-
-def creer_embed_team(
+def obtenir_max_team(
     guild_id,
     numero
 ):
@@ -704,1086 +344,154 @@ def creer_embed_team(
         numero
     )
 
-    embed = discord.Embed(
-        title=f"🏆 TEAM {numero}",
-        description=(
-            f"**Salon :** {team['nom_salon']}\n"
-            f"**Rôle :** {team['nom_role']}\n"
-            f"**Maximum :** {team['max_joueurs']} joueurs"
-        ),
-        color=discord.Color.blurple()
-    )
-
-    return embed
-
-
-# ============================================================
-# REFRESH SÉCURISÉ
-# ============================================================
-
-async def rafraichir_partout(guild):
-
-    guild_id = guild.id
-
-    if guild_id not in verrous_rafraichissement:
-        verrous_rafraichissement[guild_id] = asyncio.Lock()
-
-    verrou = verrous_rafraichissement[guild_id]
-
-    async with verrou:
-
+    if team:
         try:
-            await _rafraichir_partout(guild)
-
-        except Exception as erreur:
-
-            print(
-                f"❌ Erreur refresh serveur {guild.name}:"
+            return max(
+                1,
+                int(team.get("max", 5))
             )
+        except Exception:
+            return 5
 
-            traceback.print_exc()
+    return 5
 
 
-async def _rafraichir_partout(guild):
-
-    guild_id = guild.id
-
-    config = obtenir_config_serveur(
-        guild_id
-    )
-
-    roster = classements_par_serveur.setdefault(
-        guild_id,
-        config.get("classement", [])
-    )
-
-    # Synchronisation JSON
-    config["classement"] = roster
-
-    teams = obtenir_teams(guild_id)
-
-    if not teams:
-        return
-
-    # ========================================================
-    # CRÉER / METTRE À JOUR ROLES + SALONS
-    # ========================================================
-
-    roles_teams = {}
-    salons_teams = {}
-
-    for numero, team in teams:
-
-        role = await obtenir_ou_creer_role(
-            guild,
-            numero,
-            team
-        )
-
-        salon = await obtenir_ou_creer_salon(
-            guild,
-            numero,
-            team
-        )
-
-        if role:
-            roles_teams[numero] = role
-
-        if salon:
-            salons_teams[numero] = salon
-
-    # ========================================================
-    # DÉTERMINER LES MEMBRES DU ROSTER
-    # ========================================================
-
-    membres_roster = {}
-
-    for position, user_id in enumerate(
-        roster,
-        start=1
-    ):
-
-        team_numero = (
-            obtenir_equipe_et_salon_dynamique(
-                guild_id,
-                position
-            )
-        )
-
-        if team_numero is None:
-            continue
-
-        membre = guild.get_member(
-            int(user_id)
-        )
-
-        if membre is None:
-
-            try:
-                membre = await guild.fetch_member(
-                    int(user_id)
-                )
-            except Exception:
-                membre = None
-
-        if membre:
-            membres_roster[
-                membre.id
-            ] = team_numero
-
-    # ========================================================
-    # NETTOYAGE DES ANCIENS ROLES
-    # ========================================================
-
-    roster_ids = set(
-        membres_roster.keys()
-    )
-
-    for numero, role in roles_teams.items():
-
-        for membre in list(role.members):
-
-            if membre.id not in roster_ids:
-
-                try:
-                    await membre.remove_roles(
-                        role,
-                        reason="Retrait automatique du roster"
-                    )
-
-                except discord.Forbidden:
-                    pass
-
-                except discord.HTTPException:
-                    pass
-
-    # ========================================================
-    # ATTRIBUTION DES BONS ROLES
-    # ========================================================
-
-    tous_les_roles = list(
-        roles_teams.values()
-    )
-
-    for membre_id, team_numero in membres_roster.items():
-
-        membre = guild.get_member(
-            membre_id
-        )
-
-        if membre is None:
-            continue
-
-        role_cible = roles_teams.get(
-            team_numero
-        )
-
-        if role_cible is None:
-            continue
-
-        # Retirer les mauvais rôles
-        mauvais_roles = [
-            role
-            for role in tous_les_roles
-            if role != role_cible
-            and role in membre.roles
-        ]
-
-        if mauvais_roles:
-
-            try:
-                await membre.remove_roles(
-                    *mauvais_roles,
-                    reason="Réorganisation automatique des teams"
-                )
-
-            except discord.Forbidden:
-                pass
-
-            except discord.HTTPException:
-                pass
-
-        # Ajouter le bon rôle
-        if role_cible not in membre.roles:
-
-            try:
-                await membre.add_roles(
-                    role_cible,
-                    reason="Attribution automatique de team"
-                )
-
-            except discord.Forbidden:
-                pass
-
-            except discord.HTTPException:
-                pass
-
-    # ========================================================
-    # SAUVEGARDE CONFIG
-    # ========================================================
-
-    config["classement"] = roster
-
-    sauvegarder_config_serveur(
-        guild_id
-    )
-
-    # ========================================================
-    # MESSAGES DES TEAMS
-    # ========================================================
-
-    for numero, team in teams:
-
-        salon = salons_teams.get(
-            numero
-        )
-
-        if salon is None:
-            continue
-
-        lignes = []
-
-        for position, user_id in enumerate(
-            roster,
-            start=1
-        ):
-
-            equipe = (
-                obtenir_equipe_et_salon_dynamique(
-                    guild_id,
-                    position
-                )
-            )
-
-            if equipe != numero:
-                continue
-
-            membre = guild.get_member(
-                int(user_id)
-            )
-
-            if membre:
-
-                lignes.append(
-                    f"**{position}.** {membre.mention}"
-                )
-
-            else:
-
-                lignes.append(
-                    f"**{position}.** <@{user_id}>"
-                )
-
-        if not lignes:
-            description = (
-                "Aucun joueur dans cette team."
-            )
-
-        else:
-            description = "\n".join(
-                lignes
-            )
-
-        embed = discord.Embed(
-            title=f"🏆 TEAM {numero}",
-            description=description,
-            color=discord.Color.blurple()
-        )
-
-        embed.set_footer(
-            text=(
-                f"Maximum : "
-                f"{team['max_joueurs']} joueurs"
-            )
-        )
-
-        message = None
-
-        message_id = team.get(
-            "message_id"
-        )
-
-        # Essayer de récupérer l'ancien message
-        if message_id:
-
-            try:
-                message = await salon.fetch_message(
-                    int(message_id)
-                )
-
-            except discord.NotFound:
-                message = None
-
-            except discord.HTTPException:
-                message = None
-
-        # Modifier le message existant
-        if message:
-
-            try:
-                await message.edit(
-                    embed=embed
-                )
-
-            except discord.HTTPException:
-                pass
-
-        # Sinon créer UN nouveau message
-        else:
-
-            try:
-                message = await salon.send(
-                    embed=embed
-                )
-
-                team["message_id"] = message.id
-
-            except discord.Forbidden:
-                pass
-
-            except discord.HTTPException:
-                pass
-
-    sauvegarder_config_serveur(
-        guild_id
-    )
-
-
-# ============================================================
-# REFRESH EN TÂCHE
-# ============================================================
-
-def lancer_refresh(guild):
-
-    asyncio.create_task(
-        rafraichir_partout(guild)
-    )
-
-
-# ============================================================
-# MODAL : MODIFIER UNE TEAM
-# ============================================================
-
-class ModalModifierTeam(
-    discord.ui.Modal,
-    title="✏️ Modifier une Team"
-):
-
-    nom_salon = discord.ui.TextInput(
-        label="Nom du salon",
-        placeholder="Ex: 🏆︱𝐓𝐄𝐀𝐌-𝟕",
-        max_length=100,
-        required=True
-    )
-
-    nom_role = discord.ui.TextInput(
-        label="Nom du rôle",
-        placeholder="Ex: Team 7",
-        max_length=100,
-        required=True
-    )
-
-    max_joueurs = discord.ui.TextInput(
-        label="Maximum de joueurs",
-        placeholder="Ex: 5",
-        max_length=4,
-        required=True
-    )
-
-    def __init__(
-        self,
-        guild_id,
-        numero
-    ):
-
-        super().__init__()
-
-        self.guild_id = guild_id
-        self.numero = numero
-
-        team = obtenir_team(
-            guild_id,
-            numero
-        )
-
-        if team:
-
-            self.nom_salon.default = (
-                team.get("nom_salon", "")
-            )
-
-            self.nom_role.default = (
-                team.get("nom_role", "")
-            )
-
-            self.max_joueurs.default = str(
-                team.get("max_joueurs", 5)
-            )
-
-    async def on_submit(
-        self,
-        interaction
-    ):
-
-        try:
-            maximum = int(
-                self.max_joueurs.value.strip()
-            )
-
-            if maximum < 1:
-                raise ValueError
-
-            if maximum > 9999:
-                raise ValueError
-
-        except ValueError:
-
-            await interaction.response.send_message(
-                "❌ Le maximum doit être un nombre entre 1 et 9999.",
-                ephemeral=True
-            )
-
-            return
-
-        config = obtenir_config_serveur(
-            self.guild_id
-        )
-
-        cle = str(
-            self.numero
-        )
-
-        if cle not in config["teams"]:
-
-            await interaction.response.send_message(
-                "❌ Cette team n'existe plus.",
-                ephemeral=True
-            )
-
-            return
-
-        team = config["teams"][cle]
-
-        team["nom_salon"] = (
-            self.nom_salon.value.strip()
-        )
-
-        team["nom_role"] = (
-            self.nom_role.value.strip()
-        )
-
-        team["max_joueurs"] = maximum
-
-        sauvegarder_config_serveur(
-            self.guild_id
-        )
-
-        await interaction.response.send_message(
-            f"✅ **TEAM {self.numero}** a été modifiée.",
-            ephemeral=True
-        )
-
-        guild = bot.get_guild(
-            self.guild_id
-        )
-
-        if guild:
-            lancer_refresh(guild)
-
-
-# ============================================================
-# MODAL : AJOUTER UNE TEAM
-# ============================================================
-
-class ModalAjouterTeam(
-    discord.ui.Modal,
-    title="➕ Ajouter une Team"
-):
-
-    nom_salon = discord.ui.TextInput(
-        label="Nom du salon",
-        placeholder="Ex: 🏆︱𝐓𝐄𝐀𝐌-𝟗",
-        max_length=100,
-        required=True
-    )
-
-    nom_role = discord.ui.TextInput(
-        label="Nom du rôle",
-        placeholder="Ex: Team 9",
-        max_length=100,
-        required=True
-    )
-
-    max_joueurs = discord.ui.TextInput(
-        label="Maximum de joueurs",
-        placeholder="Ex: 5",
-        max_length=4,
-        required=True
-    )
-
-    async def on_submit(
-        self,
-        interaction
-    ):
-
-        try:
-            maximum = int(
-                self.max_joueurs.value.strip()
-            )
-
-            if maximum < 1 or maximum > 9999:
-                raise ValueError
-
-        except ValueError:
-
-            await interaction.response.send_message(
-                "❌ Le maximum doit être un nombre entre 1 et 9999.",
-                ephemeral=True
-            )
-
-            return
-
-        config = obtenir_config_serveur(
-            interaction.guild.id
-        )
-
-        teams = config["teams"]
-
-        numeros = []
-
-        for cle in teams.keys():
-
-            try:
-                numeros.append(
-                    int(cle)
-                )
-            except Exception:
-                pass
-
-        # Prochaine team disponible
-        nouveau_numero = (
-            max(numeros, default=0) + 1
-        )
-
-        teams[str(nouveau_numero)] = {
-            "nom_salon": self.nom_salon.value.strip(),
-            "nom_role": self.nom_role.value.strip(),
-            "max_joueurs": maximum,
-            "role_id": None,
-            "channel_id": None,
-            "message_id": None
-        }
-
-        sauvegarder_config_serveur(
-            interaction.guild.id
-        )
-
-        await interaction.response.send_message(
-            (
-                f"✅ **TEAM {nouveau_numero}** a été ajoutée !\n"
-                f"👥 Maximum : **{maximum} joueurs**"
-            ),
-            ephemeral=True
-        )
-
-        lancer_refresh(
-            interaction.guild
-        )
-
-
-# ============================================================
-# MENU POUR UNE TEAM
-# ============================================================
-
-class MenuDeroulantTeam(
-    discord.ui.Select
-):
-
-    def __init__(
-        self,
-        guild_id,
-        numero,
-        team,
-        row
-    ):
-
-        self.guild_id = guild_id
-        self.numero = numero
-
-        nom_salon = team.get(
-            "nom_salon",
-            "Salon"
-        )
-
-        nom_role = team.get(
-            "nom_role",
-            "Rôle"
-        )
-
-        maximum = team.get(
-            "max_joueurs",
-            5
-        )
-
-        description = (
-            f"Salon: {nom_salon} | "
-            f"Rôle: {nom_role} | "
-            f"Max: {maximum}"
-        )
-
-        # Discord limite la description à 100 caractères.
-        description = description[:100]
-
-        options = [
-            discord.SelectOption(
-                label=f"TEAM {numero}",
-                description=description,
-                emoji="✏️",
-                value=str(numero)
-            )
-        ]
-
-        super().__init__(
-            placeholder=f"⚙️ Modifier TEAM {numero}",
-            min_values=1,
-            max_values=1,
-            options=options,
-            row=row
-        )
-
-    async def callback(
-        self,
-        interaction
-    ):
-
-        await interaction.response.send_modal(
-            ModalModifierTeam(
-                self.guild_id,
-                self.numero
-            )
-        )
-
-
-# ============================================================
-# BOUTON AJOUTER TEAM
-# ============================================================
-
-class BoutonAjouterTeam(
-    discord.ui.Button
-):
-
-    def __init__(self):
-
-        super().__init__(
-            label="Ajouter une team",
-            emoji="➕",
-            style=discord.ButtonStyle.success,
-            row=3
-        )
-
-    async def callback(
-        self,
-        interaction
-    ):
-
-        await interaction.response.send_modal(
-            ModalAjouterTeam()
-        )
-
-
-# ============================================================
-# PAGINATION TEAM
-# ============================================================
-
-class BoutonPageTeam(
-    discord.ui.Button
-):
-
-    def __init__(
-        self,
-        guild_id,
-        page,
-        direction
-    ):
-
-        self.guild_id = guild_id
-        self.page = page
-        self.direction = direction
-
-        if direction == -1:
-
-            label = "Précédent"
-            emoji = "⬅️"
-
-        else:
-
-            label = "Suivant"
-            emoji = "➡️"
-
-        super().__init__(
-            label=label,
-            emoji=emoji,
-            style=discord.ButtonStyle.secondary,
-            row=4
-        )
-
-    async def callback(
-        self,
-        interaction
-    ):
-
-        nouvelle_page = (
-            self.page + self.direction
-        )
-
-        await interaction.response.edit_message(
-            embed=creer_embed_personnalisation(
-                self.guild_id,
-                nouvelle_page
-            ),
-            view=VuePersonnalisationTeams(
-                self.guild_id,
-                nouvelle_page
-            )
-        )
-
-
-# ============================================================
-# EMBED PERSONNALISATION
-# ============================================================
-
-def creer_embed_personnalisation(
-    guild_id,
-    page
+def obtenir_nombre_teams(
+    guild_id
 ):
 
     teams = obtenir_teams(
         guild_id
     )
 
-    par_page = 3
+    if not teams:
+        return 0
 
-    total_pages = max(
-        1,
-        (len(teams) + par_page - 1)
-        // par_page
+    return max(
+        int(numero)
+        for numero in teams.keys()
+        if str(numero).isdigit()
     )
 
-    page = max(
-        0,
-        min(page, total_pages - 1)
+
+def obtenir_equipe_et_salon_dynamique(
+    guild_id,
+    position
+):
+
+    if position <= 0:
+        return 1
+
+    teams = obtenir_teams(
+        guild_id
     )
 
-    debut = page * par_page
-    teams_page = teams[
-        debut: debut + par_page
+    if not teams:
+        return 1
+
+    reste = position
+
+    numeros = sorted(
+        [
+            int(x)
+            for x in teams.keys()
+            if str(x).isdigit()
+        ]
+    )
+
+    for numero in numeros:
+
+        capacite = obtenir_max_team(
+            guild_id,
+            numero
+        )
+
+        if reste <= capacite:
+            return numero
+
+        reste -= capacite
+
+    return numeros[-1]
+
+
+def normaliser_nom_salon(nom):
+
+    return (
+        nom.lower()
+        .replace("-", "")
+        .replace(" ", "")
+        .replace("\ufe0f", "")
+    )
+
+
+# ============================================================
+# AJOUTER UNE TEAM
+# ============================================================
+
+def ajouter_nouvelle_team(
+    guild_id
+):
+
+    configs = charger_config_globale()
+
+    gid_str = str(guild_id)
+
+    if gid_str not in configs:
+        configs[gid_str] = configuration_par_defaut()
+
+    configs[gid_str] = migrer_ancienne_configuration(
+        configs[gid_str]
+    )
+
+    teams = configs[gid_str]["teams"]
+
+    numeros = [
+        int(x)
+        for x in teams.keys()
+        if str(x).isdigit()
     ]
 
-    embed = discord.Embed(
-        title="✏️ Personnaliser les Équipes",
-        description=(
-            "Sélectionne une team pour modifier :\n"
-            "• 🏷️ Le nom du salon\n"
-            "• 🎭 Le nom du rôle\n"
-            "• 👥 Le nombre maximum de joueurs\n\n"
-            f"**Page {page + 1}/{total_pages}**"
-        ),
-        color=discord.Color.blurple()
+    nouveau_numero = (
+        max(numeros) + 1
+        if numeros
+        else 1
     )
 
-    for numero, team in teams_page:
+    teams[str(nouveau_numero)] = {
+        "nom": f"💫︱𝐓𝐄𝐀𝐌-{nouveau_numero}💫",
+        "role": f"Team {nouveau_numero}",
+        "max": 5
+    }
 
-        embed.add_field(
-            name=f"🏆 TEAM {numero}",
-            value=(
-                f"**Salon :** {team['nom_salon']}\n"
-                f"**Rôle :** {team['nom_role']}\n"
-                f"**Maximum :** {team['max_joueurs']} joueurs"
-            ),
-            inline=False
-        )
+    configs[gid_str]["teams"] = teams
 
-    return embed
+    enregistrer_config_globale(
+        configs
+    )
+
+    config_serveurs[guild_id] = configs[gid_str]
+
+    return nouveau_numero
 
 
 # ============================================================
-# VIEW PERSONNALISATION
+# PANEL DE CONFIGURATION
 # ============================================================
 
-class VuePersonnalisationTeams(
-    discord.ui.View
-):
+class VuePanelConfig(discord.ui.View):
 
-    def __init__(
-        self,
-        guild_id,
-        page=0
-    ):
+    def __init__(self, guild_id):
 
         super().__init__(
-            timeout=600
+            timeout=120
         )
 
-        self.guild_id = guild_id
-        self.page = page
-
-        teams = obtenir_teams(
-            guild_id
-        )
-
-        par_page = 3
-
-        total_pages = max(
-            1,
-            (len(teams) + par_page - 1)
-            // par_page
-        )
-
-        self.page = max(
-            0,
-            min(page, total_pages - 1)
-        )
-
-        debut = self.page * par_page
-
-        teams_page = teams[
-            debut: debut + par_page
-        ]
-
-        # Maximum 3 dropdowns
-        for index, (numero, team) in enumerate(
-            teams_page
-        ):
-
-            self.add_item(
-                MenuDeroulantTeam(
-                    guild_id,
-                    numero,
-                    team,
-                    row=index
-                )
-            )
-
-        # Ajouter team
         self.add_item(
-            BoutonAjouterTeam()
-        )
-
-        # Navigation
-        if self.page > 0:
-
-            self.add_item(
-                BoutonPageTeam(
-                    guild_id,
-                    self.page,
-                    -1
-                )
+            MenuDeroulantConfiguration(
+                guild_id
             )
-
-        if self.page < total_pages - 1:
-
-            self.add_item(
-                BoutonPageTeam(
-                    guild_id,
-                    self.page,
-                    1
-                )
-            )
-
-
-# ============================================================
-# MODAL TAILLE MAIN ROSTER
-# ============================================================
-
-class ModalTailleTeam(
-    discord.ui.Modal,
-    title="👥 Taille du Main Roster"
-):
-
-    taille = discord.ui.TextInput(
-        label="Maximum de joueurs",
-        placeholder="Ex: 5",
-        max_length=4,
-        required=True
-    )
-
-    async def on_submit(
-        self,
-        interaction
-    ):
-
-        try:
-            valeur = int(
-                self.taille.value.strip()
-            )
-
-            if valeur < 1 or valeur > 9999:
-                raise ValueError
-
-        except ValueError:
-
-            await interaction.response.send_message(
-                "❌ Entre un nombre entre 1 et 9999.",
-                ephemeral=True
-            )
-
-            return
-
-        config = obtenir_config_serveur(
-            interaction.guild.id
         )
 
-        config["taille_team"] = valeur
-
-        # Le Main Roster = Team 1
-        if "1" not in config["teams"]:
-
-            config["teams"]["1"] = {
-                "nom_salon": nom_salon_par_defaut(1),
-                "nom_role": nom_role_par_defaut(1),
-                "max_joueurs": valeur,
-                "role_id": None,
-                "channel_id": None,
-                "message_id": None
-            }
-
-        else:
-
-            config["teams"]["1"]["max_joueurs"] = valeur
-
-        sauvegarder_config_serveur(
-            interaction.guild.id
-        )
-
-        await interaction.response.send_message(
-            f"✅ Le Main Roster peut maintenant contenir **{valeur} joueurs**.",
-            ephemeral=True
-        )
-
-        lancer_refresh(
-            interaction.guild
-        )
-
-
-# ============================================================
-# MODAL ROLE ADMIN
-# ============================================================
-
-class ModalRoleAdmin(
-    discord.ui.Modal,
-    title="🛡️ Rôle Administrateur"
-):
-
-    role_id = discord.ui.TextInput(
-        label="ID du rôle Discord",
-        placeholder="Ex: 123456789012345678",
-        max_length=25,
-        required=True
-    )
-
-    async def on_submit(
-        self,
-        interaction
-    ):
-
-        try:
-            role_id = int(
-                self.role_id.value.strip()
-            )
-
-        except ValueError:
-
-            await interaction.response.send_message(
-                "❌ ID de rôle invalide.",
-                ephemeral=True
-            )
-
-            return
-
-        role = interaction.guild.get_role(
-            role_id
-        )
-
-        if role is None:
-
-            await interaction.response.send_message(
-                "❌ Je ne trouve pas ce rôle sur ce serveur.",
-                ephemeral=True
-            )
-
-            return
-
-        config = obtenir_config_serveur(
-            interaction.guild.id
-        )
-
-        config["role_admin_id"] = role_id
-
-        sauvegarder_config_serveur(
-            interaction.guild.id
-        )
-
-        await interaction.response.send_message(
-            f"✅ Le rôle admin est maintenant {role.mention}.",
-            ephemeral=True
-        )
-
-
-# ============================================================
-# MODAL MOTIFS TICKETS
-# ============================================================
-
-class ModalMotifsTickets(
-    discord.ui.Modal,
-    title="🎫 Motifs des Tickets"
-):
-
-    motifs = discord.ui.TextInput(
-        label="Motifs séparés par des virgules",
-        placeholder="Admin, Test Team, Tryout",
-        max_length=500,
-        required=True
-    )
-
-    async def on_submit(
-        self,
-        interaction
-    ):
-
-        liste = [
-            motif.strip()
-            for motif in self.motifs.value.split(",")
-            if motif.strip()
-        ]
-
-        if not liste:
-
-            await interaction.response.send_message(
-                "❌ Tu dois entrer au moins un motif.",
-                ephemeral=True
-            )
-
-            return
-
-        config = obtenir_config_serveur(
-            interaction.guild.id
-        )
-
-        config["motifs_tickets"] = liste
-
-        sauvegarder_config_serveur(
-            interaction.guild.id
-        )
-
-        await interaction.response.send_message(
-            "✅ Les motifs des tickets ont été mis à jour.",
-            ephemeral=True
-        )
-
-
-# ============================================================
-# MENU CONFIGURATION
-# ============================================================
 
 class MenuDeroulantConfiguration(
     discord.ui.Select
@@ -1799,24 +507,17 @@ class MenuDeroulantConfiguration(
         options = [
 
             discord.SelectOption(
-                label="Taille du Main Roster",
-                description="Modifier le maximum de joueurs de la Team 1.",
-                emoji="👥",
-                value="taille"
+                label="Personnaliser les Teams",
+                description="Modifier les Teams, rôles et limites.",
+                emoji="✏️",
+                value="custom_team"
             ),
 
             discord.SelectOption(
                 label="Lier le Rôle Admin",
-                description="Associer le rôle de modération.",
+                description="Associer le rôle administrateur.",
                 emoji="🛡️",
                 value="role_admin"
-            ),
-
-            discord.SelectOption(
-                label="Personnaliser les Équipes",
-                description="Modifier les teams, rôles, salons et capacités.",
-                emoji="✏️",
-                value="custom_team"
             ),
 
             discord.SelectOption(
@@ -1825,6 +526,7 @@ class MenuDeroulantConfiguration(
                 emoji="🎫",
                 value="motifs"
             )
+
         ]
 
         super().__init__(
@@ -1836,35 +538,29 @@ class MenuDeroulantConfiguration(
 
     async def callback(
         self,
-        interaction
+        interaction: discord.Interaction
     ):
 
         choix = self.values[0]
 
-        if choix == "taille":
+        if choix == "custom_team":
 
-            await interaction.response.send_modal(
-                ModalTailleTeam()
+            await interaction.response.send_message(
+                embed=creer_embed_configuration_teams(
+                    self.guild_id,
+                    0
+                ),
+                view=VueConfigurationTeams(
+                    self.guild_id,
+                    0
+                ),
+                ephemeral=True
             )
 
         elif choix == "role_admin":
 
             await interaction.response.send_modal(
                 ModalRoleAdmin()
-            )
-
-        elif choix == "custom_team":
-
-            await interaction.response.send_message(
-                embed=creer_embed_personnalisation(
-                    self.guild_id,
-                    0
-                ),
-                view=VuePersonnalisationTeams(
-                    self.guild_id,
-                    0
-                ),
-                ephemeral=True
             )
 
         elif choix == "motifs":
@@ -1875,10 +571,1226 @@ class MenuDeroulantConfiguration(
 
 
 # ============================================================
-# VIEW CONFIG
+# EMBED DES TEAMS
 # ============================================================
 
-class VuePanelConfig(
+def creer_embed_configuration_teams(
+    guild_id,
+    page=0
+):
+
+    teams = obtenir_teams(
+        guild_id
+    )
+
+    numeros = sorted(
+        teams.keys(),
+        key=lambda x: int(x)
+    )
+
+    # 3 teams par page
+    total_pages = max(
+        1,
+        (len(numeros) + 2) // 3
+    )
+
+    page = max(
+        0,
+        min(
+            page,
+            total_pages - 1
+        )
+    )
+
+    debut = page * 3
+
+    numeros_page = numeros[
+        debut:debut + 3
+    ]
+
+    embed = discord.Embed(
+        title="✏️ Personnalisation des Teams",
+        description=(
+            "Configurez chaque équipe individuellement.\n\n"
+            "Chaque Team possède son propre :\n"
+            "• numéro\n"
+            "• nom du salon\n"
+            "• nom du rôle\n"
+            "• nombre maximum de joueurs\n\n"
+            "Utilisez **Ajouter une Team** pour créer "
+            "une nouvelle équipe.\n\n"
+            f"📄 **Page {page + 1}/{total_pages}**\n"
+            f"👥 **{len(numeros)} Teams configurées**"
+        ),
+        color=discord.Color.blue()
+    )
+
+    for numero in numeros_page:
+
+        team = teams[numero]
+
+        nom = team.get(
+            "nom",
+            f"Team {numero}"
+        )
+
+        role = team.get(
+            "role",
+            f"Team {numero}"
+        )
+
+        maximum = team.get(
+            "max",
+            5
+        )
+
+        embed.add_field(
+            name=f"👥 TEAM {numero}",
+            value=(
+                f"**Numéro :** `{numero}`\n"
+                f"**Nom du salon :** `{nom}`\n"
+                f"**Nom du rôle :** `{role}`\n"
+                f"**Maximum :** `{maximum} joueurs`"
+            ),
+            inline=False
+        )
+
+    return embed
+
+
+# ============================================================
+# VUE DES TEAMS
+# ============================================================
+
+class VueConfigurationTeams(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        guild_id,
+        page=0
+    ):
+
+        super().__init__(
+            timeout=180
+        )
+
+        self.guild_id = guild_id
+        self.page = page
+
+        self.reconstruire_menu()
+
+    def reconstruire_menu(self):
+
+        self.clear_items()
+
+        teams = obtenir_teams(
+            self.guild_id
+        )
+
+        numeros = sorted(
+            teams.keys(),
+            key=lambda x: int(x)
+        )
+
+        # 3 Teams maximum par page
+        total_pages = max(
+            1,
+            (len(numeros) + 2) // 3
+        )
+
+        self.page = max(
+            0,
+            min(
+                self.page,
+                total_pages - 1
+            )
+        )
+
+        debut = self.page * 3
+
+        numeros_page = numeros[
+            debut:debut + 3
+        ]
+
+        # Une ligne par Team
+        for row, numero in enumerate(
+            numeros_page
+        ):
+
+            self.add_item(
+                MenuTeam(
+                    self.guild_id,
+                    int(numero),
+                    row=row
+                )
+            )
+
+        # Bouton ajouter
+        self.add_item(
+            BoutonAjouterTeam(
+                self.guild_id,
+                self.page
+            )
+        )
+
+        # Page précédente
+        if self.page > 0:
+
+            self.add_item(
+                BoutonPageTeams(
+                    self.guild_id,
+                    self.page,
+                    -1
+                )
+            )
+
+        # Page suivante
+        if self.page < total_pages - 1:
+
+            self.add_item(
+                BoutonPageTeams(
+                    self.guild_id,
+                    self.page,
+                    1
+                )
+            )
+
+
+class MenuTeam(
+    discord.ui.Select
+):
+
+    def __init__(
+        self,
+        guild_id,
+        numero,
+        row=0
+    ):
+
+        self.guild_id = guild_id
+        self.numero = numero
+
+        team = obtenir_team(
+            guild_id,
+            numero
+        )
+
+        nom = team.get(
+            "nom",
+            f"Team {numero}"
+        )
+
+        role = team.get(
+            "role",
+            f"Team {numero}"
+        )
+
+        maximum = team.get(
+            "max",
+            5
+        )
+
+        options = [
+
+            discord.SelectOption(
+                label=f"Team {numero}",
+                description=(
+                    f"Numéro {numero} • "
+                    f"Max {maximum} joueurs"
+                ),
+                emoji="👥",
+                value="modifier"
+            ),
+
+            discord.SelectOption(
+                label="Supprimer cette Team",
+                description=(
+                    f"Supprimer Team {numero}"
+                ),
+                emoji="🗑️",
+                value="supprimer"
+            )
+
+        ]
+
+        super().__init__(
+            placeholder=(
+                f"TEAM {numero} • "
+                f"{maximum} joueurs max • "
+                f"{role}"
+            ),
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=row
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        choix = self.values[0]
+
+        if choix == "modifier":
+
+            await interaction.response.send_modal(
+                ModalModifierTeam(
+                    self.guild_id,
+                    self.numero
+                )
+            )
+
+        elif choix == "supprimer":
+
+            teams = obtenir_teams(
+                self.guild_id
+            )
+
+            if len(teams) <= 1:
+
+                await interaction.response.send_message(
+                    "❌ Vous devez garder au moins une Team.",
+                    ephemeral=True
+                )
+
+                return
+
+            del teams[str(self.numero)]
+
+            # Réindexation automatique
+            anciennes_teams = teams.copy()
+
+            nouvelles_teams = {}
+
+            nouveau_numero = 1
+
+            for ancien_numero in sorted(
+                anciennes_teams.keys(),
+                key=lambda x: int(x)
+            ):
+
+                nouvelles_teams[
+                    str(nouveau_numero)
+                ] = anciennes_teams[
+                    ancien_numero
+                ]
+
+                nouveau_numero += 1
+
+            mettre_a_jour_config_serveur(
+                self.guild_id,
+                "teams",
+                nouvelles_teams
+            )
+
+            await interaction.response.edit_message(
+                embed=creer_embed_configuration_teams(
+                    self.guild_id,
+                    0
+                ),
+                view=VueConfigurationTeams(
+                    self.guild_id,
+                    0
+                )
+            )
+
+            asyncio.create_task(
+                rafraichir_partout(
+                    interaction.guild
+                )
+            )
+
+
+# ============================================================
+# BOUTON NAVIGATION DES TEAMS
+# ============================================================
+
+class BoutonPageTeams(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        guild_id,
+        page,
+        direction
+    ):
+
+        self.guild_id = guild_id
+        self.page = page
+        self.direction = direction
+
+        if direction < 0:
+
+            super().__init__(
+                label="Page précédente",
+                emoji="⬅️",
+                style=discord.ButtonStyle.secondary,
+                row=4
+            )
+
+        else:
+
+            super().__init__(
+                label="Page suivante",
+                emoji="➡️",
+                style=discord.ButtonStyle.secondary,
+                row=4
+            )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        teams = obtenir_teams(
+            self.guild_id
+        )
+
+        total_pages = max(
+            1,
+            (len(teams) + 2) // 3
+        )
+
+        nouvelle_page = (
+            self.page + self.direction
+        )
+
+        nouvelle_page = max(
+            0,
+            min(
+                nouvelle_page,
+                total_pages - 1
+            )
+        )
+
+        await interaction.response.edit_message(
+            embed=creer_embed_configuration_teams(
+                self.guild_id,
+                nouvelle_page
+            ),
+            view=VueConfigurationTeams(
+                self.guild_id,
+                nouvelle_page
+            )
+        )
+
+
+# ============================================================
+# MODIFICATION D'UNE TEAM
+# ============================================================
+
+class ModalModifierTeam(
+    discord.ui.Modal
+):
+
+    def __init__(
+        self,
+        guild_id,
+        numero
+    ):
+
+        self.guild_id = guild_id
+        self.numero = numero
+
+        team = obtenir_team(
+            guild_id,
+            numero
+        )
+
+        super().__init__(
+            title=f"Configuration Team {numero}"
+        )
+
+        self.nom_salon = discord.ui.TextInput(
+            label="Nom du Salon",
+            placeholder="Ex: 🏅︱𝐌𝐀𝐈𝐍-𝐑𝐎𝐒𝐓𝐄𝐑",
+            default=team.get(
+                "nom",
+                f"Team {numero}"
+            ),
+            max_length=100
+        )
+
+        self.nom_role = discord.ui.TextInput(
+            label="Nom du Rôle",
+            placeholder="Ex: Main Roster",
+            default=team.get(
+                "role",
+                f"Team {numero}"
+            ),
+            max_length=100
+        )
+
+        self.maximum = discord.ui.TextInput(
+            label="Nombre maximum de joueurs",
+            placeholder="Ex: 5",
+            default=str(
+                team.get(
+                    "max",
+                    5
+                )
+            ),
+            min_length=1,
+            max_length=4
+        )
+
+        self.add_item(
+            self.nom_salon
+        )
+
+        self.add_item(
+            self.nom_role
+        )
+
+        self.add_item(
+            self.maximum
+        )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        try:
+
+            maximum = int(
+                self.maximum.value.strip()
+            )
+
+            if maximum < 1:
+                raise ValueError()
+
+            if maximum > 9999:
+                raise ValueError()
+
+        except Exception:
+
+            await interaction.response.send_message(
+                "❌ Le nombre maximum doit être compris entre 1 et 9999.",
+                ephemeral=True
+            )
+
+            return
+
+        teams = obtenir_teams(
+            self.guild_id
+        )
+
+        numero = str(
+            self.numero
+        )
+
+        if numero not in teams:
+
+            await interaction.response.send_message(
+                "❌ Cette Team n'existe plus.",
+                ephemeral=True
+            )
+
+            return
+
+        teams[numero] = {
+            "nom": self.nom_salon.value.strip(),
+            "role": self.nom_role.value.strip(),
+            "max": maximum
+        }
+
+        mettre_a_jour_config_serveur(
+            self.guild_id,
+            "teams",
+            teams
+        )
+
+        await interaction.response.send_message(
+            embed=creer_embed_configuration_teams(
+                self.guild_id,
+                (self.numero - 1) // 3
+            ),
+            view=VueConfigurationTeams(
+                self.guild_id,
+                (self.numero - 1) // 3
+            ),
+            ephemeral=True
+        )
+
+        asyncio.create_task(
+            rafraichir_partout(
+                interaction.guild
+            )
+        )
+
+
+# ============================================================
+# AJOUTER UNE TEAM
+# ============================================================
+
+class BoutonAjouterTeam(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        guild_id,
+        page=0
+    ):
+
+        self.guild_id = guild_id
+        self.page = page
+
+        super().__init__(
+            label="Ajouter une Team",
+            emoji="➕",
+            style=discord.ButtonStyle.success,
+            row=3
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        nouveau_numero = ajouter_nouvelle_team(
+            self.guild_id
+        )
+
+        # Aller automatiquement sur la page
+        # où se trouve la nouvelle Team
+        nouvelle_page = (
+            nouveau_numero - 1
+        ) // 3
+
+        await interaction.response.edit_message(
+            embed=creer_embed_configuration_teams(
+                self.guild_id,
+                nouvelle_page
+            ),
+            view=VueConfigurationTeams(
+                self.guild_id,
+                nouvelle_page
+            )
+        )
+
+        asyncio.create_task(
+            rafraichir_partout(
+                interaction.guild
+            )
+        )
+
+
+# ============================================================
+# ROLE ADMIN
+# ============================================================
+
+class ModalRoleAdmin(
+    discord.ui.Modal,
+    title="Sécurité Staff 🛡️"
+):
+
+    rid = discord.ui.TextInput(
+        label="ID du rôle autorisé pour les commandes DATA",
+        placeholder="Collez l'ID numérique ici"
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        try:
+
+            val = int(
+                self.rid.value.strip()
+            )
+
+            mettre_a_jour_config_serveur(
+                interaction.guild_id,
+                "role_admin_id",
+                val
+            )
+
+            embed = discord.Embed(
+                title="⚙️ Configuration Mise à Jour",
+                description=(
+                    "Le rôle Admin de gestion a été "
+                    f"lié avec succès à l'ID : `{val}`."
+                ),
+                color=discord.Color.green()
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
+                ephemeral=True
+            )
+
+        except Exception:
+
+            await interaction.response.send_message(
+                "❌ Erreur : ID numérique invalide.",
+                ephemeral=True
+            )
+
+
+# ============================================================
+# MOTIFS TICKETS
+# ============================================================
+
+class ModalMotifsTickets(
+    discord.ui.Modal,
+    title="Menu des Tickets 🎫"
+):
+
+    motifs = discord.ui.TextInput(
+        label="Raisons (Séparez chaque choix par une virgule)",
+        placeholder="Ex: Admin, Recrutement, Demande Match",
+        style=discord.TextStyle.paragraph
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        liste = [
+            m.strip()
+            for m in self.motifs.value.split(",")
+            if m.strip()
+        ]
+
+        if not liste:
+
+            await interaction.response.send_message(
+                "❌ Erreur : Veuillez entrer au moins un motif valide.",
+                ephemeral=True
+            )
+
+            return
+
+        mettre_a_jour_config_serveur(
+            interaction.guild_id,
+            "motifs_tickets",
+            liste
+        )
+
+        embed = discord.Embed(
+            title="⚙️ Configuration Mise à Jour",
+            description=(
+                "Le menu déroulant des tickets propose désormais : "
+                f"`{', '.join(liste)}`."
+            ),
+            color=discord.Color.green()
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+
+# ============================================================
+# PANEL DATA
+# ============================================================
+
+class VueDataOptions(
+    discord.ui.View
+):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=60
+        )
+
+    @discord.ui.button(
+        label="GÉNÉRER UN CODE TEXTE 💾",
+        style=discord.ButtonStyle.success
+    )
+    async def btn_generer_code(
+        self,
+        interaction,
+        button
+    ):
+
+        gid = interaction.guild_id
+
+        top_actuel = classements_par_serveur.get(
+            gid,
+            []
+        )
+
+        if not top_actuel:
+
+            await interaction.response.send_message(
+                "⚠️ Le classement actuel est vide. Rien à générer.",
+                ephemeral=True
+            )
+
+            return
+
+        code_ids_bruts = ",".join(
+            str(uid)
+            for uid in top_actuel
+        )
+
+        await interaction.response.send_message(
+            content=(
+                "💾 **Séquence de Sauvegarde brute générée !**\n"
+                "Copiez les IDs ordonnés ci-dessous :\n\n"
+                f"`{code_ids_bruts}`"
+            ),
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="RESTAURER VIA UN CODE 🔄",
+        style=discord.ButtonStyle.danger
+    )
+    async def btn_restaurer_code(
+        self,
+        interaction,
+        button
+    ):
+
+        await interaction.response.send_modal(
+            FenetreCollerCode()
+        )
+
+
+class FenetreCollerCode(
+    discord.ui.Modal,
+    title="Restaurer le classement"
+):
+
+    code_entre = discord.ui.TextInput(
+        label="Collez la suite d'IDs Discord séparés par des virgules",
+        placeholder="Ex: 1529373902969770094,25901653...",
+        style=discord.TextStyle.paragraph
+    )
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        brut = self.code_entre.value.strip()
+
+        if not brut:
+
+            await interaction.response.send_message(
+                "❌ Le champ est vide.",
+                ephemeral=True
+            )
+
+            return
+
+        try:
+
+            liste_ids = [
+                int(uid.strip())
+                for uid in brut.split(",")
+                if uid.strip().isdigit()
+            ]
+
+            if not liste_ids:
+
+                await interaction.response.send_message(
+                    "❌ Séquence invalide.",
+                    ephemeral=True
+                )
+
+                return
+
+            classements_par_serveur[
+                interaction.guild_id
+            ] = list(liste_ids)
+
+            await interaction.response.send_message(
+                "✅ **Séquence acceptée !** Le bot met à jour les salons et les rôles.",
+                ephemeral=True
+            )
+
+            asyncio.create_task(
+                rafraichir_partout(
+                    interaction.guild
+                )
+            )
+
+        except Exception as e:
+
+            await interaction.response.send_message(
+                f"❌ Impossible de charger cette séquence : `{e}`",
+                ephemeral=True
+            )
+
+
+# ============================================================
+# MODALS CLASSEMENT
+# ============================================================
+
+class FenetreDeplacement(
+    discord.ui.Modal,
+    title="Changer la place (Décaler)"
+):
+
+    pos_depart = discord.ui.TextInput(
+        label="Position actuelle",
+        placeholder="Ex: 5"
+    )
+
+    pos_arrivee = discord.ui.TextInput(
+        label="Nouvelle position",
+        placeholder="Ex: 2"
+    )
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        gid = interaction.guild_id
+
+        if gid not in classements_par_serveur:
+            classements_par_serveur[gid] = []
+
+        try:
+
+            p_dep = int(
+                self.pos_depart.value
+            ) - 1
+
+            p_arr = int(
+                self.pos_arrivee.value
+            ) - 1
+
+            liste = classements_par_serveur[gid]
+
+            if (
+                p_dep < 0
+                or p_arr < 0
+                or p_dep >= len(liste)
+                or p_arr >= len(liste)
+            ):
+
+                await interaction.response.send_message(
+                    "❌ Position invalide.",
+                    ephemeral=True
+                )
+
+                return
+
+            joueur_id = liste.pop(
+                p_dep
+            )
+
+            liste.insert(
+                p_arr,
+                joueur_id
+            )
+
+            await interaction.response.send_message(
+                "📈 Déplacement effectué !",
+                ephemeral=True
+            )
+
+            asyncio.create_task(
+                rafraichir_partout(
+                    interaction.guild
+                )
+            )
+
+        except Exception:
+
+            await interaction.response.send_message(
+                "❌ Valeurs invalides.",
+                ephemeral=True
+            )
+
+
+class FenetreEchange(
+    discord.ui.Modal,
+    title="Échanger 2 places"
+):
+
+    pos1 = discord.ui.TextInput(
+        label="Position 1er joueur",
+        placeholder="Ex: 2"
+    )
+
+    pos2 = discord.ui.TextInput(
+        label="Position 2ème joueur",
+        placeholder="Ex: 5"
+    )
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        try:
+
+            p1 = int(
+                self.pos1.value
+            ) - 1
+
+            p2 = int(
+                self.pos2.value
+            ) - 1
+
+            liste = classements_par_serveur[
+                interaction.guild_id
+            ]
+
+            liste[p1], liste[p2] = (
+                liste[p2],
+                liste[p1]
+            )
+
+            await interaction.response.send_message(
+                "🔄 Échange effectué !",
+                ephemeral=True
+            )
+
+            asyncio.create_task(
+                rafraichir_partout(
+                    interaction.guild
+                )
+            )
+
+        except Exception:
+
+            await interaction.response.send_message(
+                "❌ Positions invalides.",
+                ephemeral=True
+            )
+
+
+class FenetreSuppression(
+    discord.ui.Modal,
+    title="Retirer un joueur"
+):
+
+    pos_suppr = discord.ui.TextInput(
+        label="Position à supprimer",
+        placeholder="Ex: 3"
+    )
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        try:
+
+            p = int(
+                self.pos_suppr.value
+            ) - 1
+
+            classements_par_serveur[
+                interaction.guild_id
+            ].pop(p)
+
+            await interaction.response.send_message(
+                "❌ Joueur retiré !",
+                ephemeral=True
+            )
+
+            asyncio.create_task(
+                rafraichir_partout(
+                    interaction.guild
+                )
+            )
+
+        except Exception:
+
+            await interaction.response.send_message(
+                "❌ Position invalide.",
+                ephemeral=True
+            )
+
+
+# ============================================================
+# CONTROLE DU TOP
+# ============================================================
+
+class VueControleTop(
+    discord.ui.View
+):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+        label="Changer de place 📈",
+        style=discord.ButtonStyle.primary,
+        custom_id="btn_deplace"
+    )
+    async def bouton_deplace(
+        self,
+        interaction,
+        button
+    ):
+
+        if not interaction.user.guild_permissions.administrator:
+            return
+
+        await interaction.response.send_modal(
+            FenetreDeplacement()
+        )
+
+    @discord.ui.button(
+        label="Échanger 2 places 🔄",
+        style=discord.ButtonStyle.secondary,
+        custom_id="btn_echange"
+    )
+    async def bouton_echange(
+        self,
+        interaction,
+        button
+    ):
+
+        if not interaction.user.guild_permissions.administrator:
+            return
+
+        await interaction.response.send_modal(
+            FenetreEchange()
+        )
+
+    @discord.ui.button(
+        label="Retirer du Top ❌",
+        style=discord.ButtonStyle.danger,
+        custom_id="btn_suppr"
+    )
+    async def bouton_supprime(
+        self,
+        interaction,
+        button
+    ):
+
+        if not interaction.user.guild_permissions.administrator:
+            return
+
+        await interaction.response.send_modal(
+            FenetreSuppression()
+        )
+
+    @discord.ui.button(
+        label="DATA 🗄️",
+        style=discord.ButtonStyle.danger,
+        custom_id="btn_data_panel"
+    )
+    async def bouton_data_panel(
+        self,
+        interaction,
+        button
+    ):
+
+        conf = obtenir_config_serveur(
+            interaction.guild_id
+        )
+
+        role_verif = discord.utils.get(
+            interaction.user.roles,
+            id=int(
+                conf["role_admin_id"]
+            )
+        )
+
+        if (
+            not role_verif
+            and not interaction.user.guild_permissions.administrator
+        ):
+
+            await interaction.response.send_message(
+                "❌ Accès refusé. Rôle ADMIN requis.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.send_message(
+            content="🗄️ **Gestion de la Base de Données (Permanent)**",
+            view=VueDataOptions(),
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Liste des Commandes ❓",
+        style=discord.ButtonStyle.success,
+        custom_id="btn_help"
+    )
+    async def bouton_aide(
+        self,
+        interaction,
+        button
+    ):
+
+        embed = discord.Embed(
+            title="🤖 Guide des commandes",
+            color=discord.Color.gold()
+        )
+
+        embed.add_field(
+            name="🛠️ Commandes Admin",
+            value=(
+                "`!setup`, "
+                "`!add @membre`, "
+                "`!addmany @m1 @m2...`, "
+                "`!remove @membre`, "
+                "`!tstart`, "
+                "`!twin`, "
+                "`!setup_ticket`, "
+                "`!config`"
+            ),
+            inline=False
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+
+# ============================================================
+# TICKETS
+# ============================================================
+
+class VueCreationTicket(
+    discord.ui.View
+):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+        label="Créer un ticket 🎫",
+        style=discord.ButtonStyle.primary,
+        custom_id="btn_creer_ticket"
+    )
+    async def bouton_ticket(
+        self,
+        interaction,
+        button
+    ):
+
+        await interaction.response.send_message(
+            content="📋 **Sélectionnez le motif de votre ticket :**",
+            view=VueChoixMotifTicket(
+                interaction.guild_id
+            ),
+            ephemeral=True
+        )
+
+
+class VueChoixMotifTicket(
     discord.ui.View
 ):
 
@@ -1888,394 +1800,996 @@ class VuePanelConfig(
     ):
 
         super().__init__(
-            timeout=300
+            timeout=60
         )
+
+        conf = obtenir_config_serveur(
+            guild_id
+        )
+
+        options = [
+            discord.SelectOption(
+                label=m[:100],
+                value=m[:100]
+            )
+            for m in conf["motifs_tickets"][:25]
+        ]
 
         self.add_item(
-            MenuDeroulantConfiguration(
-                guild_id
+            MenuDeroulantMotif(
+                options
             )
         )
 
 
-# ============================================================
-# SETUP
-# ============================================================
+class MenuDeroulantMotif(
+    discord.ui.Select
+):
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setup(ctx):
+    def __init__(
+        self,
+        options
+    ):
 
-    guild_id = ctx.guild.id
-
-    config = obtenir_config_serveur(
-        guild_id
-    )
-
-    # Reset roster
-    classements_par_serveur[
-        guild_id
-    ] = []
-
-    config["classement"] = []
-
-    # Trouver / créer salon principal
-    salon_top = None
-
-    if config.get("top_channel_id"):
-
-        salon_top = ctx.guild.get_channel(
-            int(config["top_channel_id"])
+        super().__init__(
+            placeholder="Choisissez la raison du ticket...",
+            options=options
         )
 
-    if salon_top is None:
+    async def callback(
+        self,
+        interaction
+    ):
 
-        salon_top = discord.utils.get(
-            ctx.guild.text_channels,
-            name="main-roster"
+        await interaction.response.defer(
+            ephemeral=True
         )
 
-    if salon_top is None:
+        motif_selectionne = self.values[0]
+
+        guild = interaction.guild
+
+        conf = obtenir_config_serveur(
+            guild.id
+        )
+
+        nom_categorie_propre = "🎫 𝙏𝙄𝘾𝙆𝙀𝙏"
+
+        categorie = discord.utils.find(
+            lambda c:
+                c.name == nom_categorie_propre
+                and isinstance(
+                    c,
+                    discord.CategoryChannel
+                ),
+            guild.channels
+        )
+
+        if not categorie:
+
+            try:
+
+                categorie = await guild.create_category(
+                    name=nom_categorie_propre
+                )
+
+            except Exception as e:
+
+                await interaction.followup.send(
+                    f"❌ Erreur catégorie : `{e}`",
+                    ephemeral=True
+                )
+
+                return
 
         try:
-            salon_top = await ctx.guild.create_text_channel(
-                "main-roster",
-                reason="Configuration du bot"
+
+            membre_createur = await guild.fetch_member(
+                interaction.user.id
             )
 
-        except Exception as erreur:
+        except Exception:
 
-            await ctx.send(
-                f"❌ Impossible de créer le salon : `{erreur}`"
+            membre_createur = interaction.user
+
+        overwrites = {
+
+            guild.default_role:
+                discord.PermissionOverwrite(
+                    read_messages=False,
+                    view_channel=False
+                ),
+
+            membre_createur:
+                discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True,
+                    attach_files=True,
+                    view_channel=True
+                ),
+
+            guild.me:
+                discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True,
+                    view_channel=True
+                )
+        }
+
+        role_admin = guild.get_role(
+            int(
+                conf["role_admin_id"]
+            )
+        )
+
+        if role_admin:
+
+            overwrites[role_admin] = discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True,
+                view_channel=True
+            )
+
+        nom_salon = (
+            f"🎫-{motif_selectionne.lower().replace(' ', '-')}-"
+            f"{interaction.user.name}"
+        )
+
+        try:
+
+            salon_ticket = await guild.create_text_channel(
+                name=nom_salon[:100],
+                category=categorie,
+                overwrites=overwrites
+            )
+
+            await interaction.followup.send(
+                f"✅ Ticket ouvert dans {salon_ticket.mention} !",
+                ephemeral=True
+            )
+
+            embed = discord.Embed(
+                title=f"🎫 Ticket - {motif_selectionne}",
+                description=(
+                    f"Bonjour {interaction.user.mention},\n\n"
+                    "Un membre de l'équipe administrative "
+                    "va vous prendre en charge.\n\n"
+                    "Décrivez votre demande."
+                ),
+                color=discord.Color.blue()
+            )
+
+            await salon_ticket.send(
+                embed=embed,
+                view=VueFermetureTicket()
+            )
+
+        except Exception as e:
+
+            await interaction.followup.send(
+                f"❌ Échec de création : `{e}`",
+                ephemeral=True
+            )
+
+
+class VueFermetureTicket(
+    discord.ui.View
+):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+        label="Fermer le ticket 🔒",
+        style=discord.ButtonStyle.danger,
+        custom_id="btn_fermer_ticket"
+    )
+    async def bouton_fermer(
+        self,
+        interaction,
+        button
+    ):
+
+        conf = obtenir_config_serveur(
+            interaction.guild_id
+        )
+
+        role_verif = discord.utils.get(
+            interaction.user.roles,
+            id=int(
+                conf["role_admin_id"]
+            )
+        )
+
+        if (
+            not role_verif
+            and not interaction.user.guild_permissions.administrator
+        ):
+
+            await interaction.response.send_message(
+                "❌ Seul un admin peut fermer ce ticket.",
+                ephemeral=True
             )
 
             return
 
-    config["top_channel_id"] = salon_top.id
-
-    embed = discord.Embed(
-        title="🏆 MAIN ROSTER",
-        description=(
-            "Le roster est actuellement vide.\n\n"
-            "Utilise `!add @membre` pour ajouter un joueur."
-        ),
-        color=discord.Color.blurple()
-    )
-
-    try:
-        message = await salon_top.send(
-            embed=embed
+        await interaction.response.send_message(
+            "🔒 **Fermeture et suppression du salon dans 5 secondes.**"
         )
 
-        config["top_message_id"] = message.id
+        await asyncio.sleep(5)
 
-        id_messages_principaux[
-            guild_id
-        ] = message.id
-
-        id_salons_principaux[
-            guild_id
-        ] = salon_top.id
-
-    except Exception as erreur:
-
-        await ctx.send(
-            f"❌ Impossible d'envoyer le panneau : `{erreur}`"
-        )
-
-        return
-
-    sauvegarder_config_serveur(
-        guild_id
-    )
-
-    await ctx.send(
-        "✅ Le système de classement a été configuré !",
-        delete_after=10
-    )
-
-    lancer_refresh(
-        ctx.guild
-    )
+        await interaction.channel.delete()
 
 
 # ============================================================
-# CONFIG
+# REFRESH DYNAMIQUE
 # ============================================================
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def config(ctx):
-
-    await ctx.send(
-        embed=discord.Embed(
-            title="⚙️ Configuration",
-            description=(
-                "Sélectionne ce que tu veux modifier "
-                "dans le menu ci-dessous."
-            ),
-            color=discord.Color.blurple()
-        ),
-        view=VuePanelConfig(
-            ctx.guild.id
-        ),
-        delete_after=None
-    )
+rafraichissement_en_cours = {}
 
 
-# ============================================================
-# ADD
-# ============================================================
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def add(ctx, membre: discord.Member):
-
-    guild_id = ctx.guild.id
-
-    roster = classements_par_serveur.setdefault(
-        guild_id,
-        obtenir_config_serveur(
-            guild_id
-        ).get("classement", [])
-    )
-
-    if membre.id in roster:
-
-        await ctx.send(
-            "⚠️ Ce joueur est déjà dans le roster.",
-            delete_after=5
-        )
-
-        return
-
-    position = len(roster) + 1
-
-    equipe = obtenir_equipe_et_salon_dynamique(
-        guild_id,
-        position
-    )
-
-    if equipe is None:
-
-        await ctx.send(
-            (
-                "❌ Toutes les teams configurées sont pleines.\n"
-                "Utilise `!config` → **Personnaliser les Équipes** "
-                "→ **Ajouter une team**."
-            ),
-            delete_after=10
-        )
-
-        return
-
-    roster.append(
-        membre.id
-    )
-
-    config = obtenir_config_serveur(
-        guild_id
-    )
-
-    config["classement"] = roster
-
-    sauvegarder_config_serveur(
-        guild_id
-    )
-
-    await ctx.send(
-        (
-            f"✅ {membre.mention} a été ajouté au roster.\n"
-            f"🏆 Team attribuée : **Team {equipe}**"
-        ),
-        delete_after=8
-    )
-
-    lancer_refresh(
-        ctx.guild
-    )
-
-
-# ============================================================
-# REMOVE
-# ============================================================
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def remove(ctx, membre: discord.Member):
-
-    guild_id = ctx.guild.id
-
-    roster = classements_par_serveur.setdefault(
-        guild_id,
-        []
-    )
-
-    if membre.id not in roster:
-
-        await ctx.send(
-            "⚠️ Ce joueur n'est pas dans le roster.",
-            delete_after=5
-        )
-
-        return
-
-    roster.remove(
-        membre.id
-    )
-
-    config = obtenir_config_serveur(
-        guild_id
-    )
-
-    config["classement"] = roster
-
-    sauvegarder_config_serveur(
-        guild_id
-    )
-
-    await ctx.send(
-        f"✅ {membre.mention} a été retiré du roster.",
-        delete_after=6
-    )
-
-    lancer_refresh(
-        ctx.guild
-    )
-
-
-# ============================================================
-# SWAP
-# ============================================================
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def swap(
-    ctx,
-    membre1: discord.Member,
-    membre2: discord.Member
+async def rafraichir_partout(
+    guild
 ):
 
-    guild_id = ctx.guild.id
+    gid = guild.id
 
-    roster = classements_par_serveur.setdefault(
-        guild_id,
-        []
-    )
-
-    if membre1.id not in roster or membre2.id not in roster:
-
-        await ctx.send(
-            "❌ Les deux joueurs doivent être dans le roster.",
-            delete_after=6
-        )
-
-        return
-
-    index1 = roster.index(
-        membre1.id
-    )
-
-    index2 = roster.index(
-        membre2.id
-    )
-
-    roster[index1], roster[index2] = (
-        roster[index2],
-        roster[index1]
-    )
-
-    config = obtenir_config_serveur(
-        guild_id
-    )
-
-    config["classement"] = roster
-
-    sauvegarder_config_serveur(
-        guild_id
-    )
-
-    await ctx.send(
-        (
-            f"🔄 {membre1.mention} et "
-            f"{membre2.mention} ont été échangés."
-        ),
-        delete_after=6
-    )
-
-    lancer_refresh(
-        ctx.guild
-    )
-
-
-# ============================================================
-# LIST
-# ============================================================
-
-@bot.command()
-async def roster(ctx):
-
-    guild_id = ctx.guild.id
-
-    roster = classements_par_serveur.setdefault(
-        guild_id,
-        obtenir_config_serveur(
-            guild_id
-        ).get("classement", [])
-    )
-
-    if not roster:
-
-        await ctx.send(
-            "🏆 Le roster est actuellement vide.",
-            delete_after=6
-        )
-
-        return
-
-    lignes = []
-
-    for position, user_id in enumerate(
-        roster,
-        start=1
+    if rafraichissement_en_cours.get(
+        gid,
+        False
     ):
 
-        membre = ctx.guild.get_member(
-            int(user_id)
+        return
+
+    rafraichissement_en_cours[gid] = True
+
+    try:
+
+        if gid not in id_salons_principaux:
+            return
+
+        if not id_salons_principaux[gid]:
+            return
+
+        if gid not in classements_par_serveur:
+
+            classements_par_serveur[gid] = []
+
+        teams = obtenir_teams(
+            gid
         )
 
-        if membre:
+        if not teams:
+            return
 
-            lignes.append(
-                f"**{position}.** {membre.mention}"
+        roles_par_team = {}
+        salons_par_team = {}
+
+        for numero in sorted(
+            teams.keys(),
+            key=lambda x: int(x)
+        ):
+
+            num = int(numero)
+
+            nom_role = obtenir_nom_role_team(
+                guild,
+                num
+            )
+
+            nom_salon = obtenir_nom_salon_team(
+                guild,
+                num
+            )
+
+            role = discord.utils.get(
+                guild.roles,
+                name=nom_role
+            )
+
+            if role is None:
+
+                try:
+
+                    role = await guild.create_role(
+                        name=nom_role,
+                        reason="Classement automatique"
+                    )
+
+                except Exception:
+
+                    role = None
+
+            roles_par_team[num] = role
+
+            salon = discord.utils.find(
+                lambda c:
+                    isinstance(
+                        c,
+                        discord.TextChannel
+                    )
+                    and normaliser_nom_salon(
+                        c.name
+                    )
+                    ==
+                    normaliser_nom_salon(
+                        nom_salon
+                    ),
+                guild.channels
+            )
+
+            if salon is None:
+
+                try:
+
+                    salon = await guild.create_text_channel(
+                        name=nom_salon,
+                        reason="Classement automatique"
+                    )
+
+                except Exception:
+
+                    salon = None
+
+            salons_par_team[num] = salon
+
+        positions_teams = {}
+
+        for index, user_id in enumerate(
+            classements_par_serveur[gid]
+        ):
+
+            position = index + 1
+
+            team = obtenir_equipe_et_salon_dynamique(
+                gid,
+                position
+            )
+
+            positions_teams[user_id] = team
+
+        tous_les_roles_team = [
+            role
+            for role in roles_par_team.values()
+            if role is not None
+        ]
+
+        membres_roster = set(
+            positions_teams.keys()
+        )
+
+        for role in tous_les_roles_team:
+
+            try:
+
+                for member in list(
+                    role.members
+                ):
+
+                    if member.id not in membres_roster:
+
+                        try:
+
+                            await member.remove_roles(
+                                role,
+                                reason="Retrait du classement"
+                            )
+
+                        except Exception:
+                            pass
+
+            except Exception:
+                pass
+
+        for user_id, team in positions_teams.items():
+
+            try:
+
+                member = guild.get_member(
+                    user_id
+                )
+
+                if member is None:
+
+                    try:
+
+                        member = await guild.fetch_member(
+                            user_id
+                        )
+
+                    except Exception:
+
+                        continue
+
+                role = roles_par_team.get(
+                    team
+                )
+
+                if role is None:
+                    continue
+
+                mauvais_roles = [
+                    r
+                    for r in tous_les_roles_team
+                    if r != role and r in member.roles
+                ]
+
+                if mauvais_roles:
+
+                    try:
+
+                        await member.remove_roles(
+                            *mauvais_roles,
+                            reason="Changement de Team"
+                        )
+
+                    except Exception:
+                        pass
+
+                if role not in member.roles:
+
+                    try:
+
+                        await member.add_roles(
+                            role,
+                            reason="Classement automatique"
+                        )
+
+                    except Exception:
+                        pass
+
+            except Exception:
+                pass
+
+        salon_top = guild.get_channel(
+            id_salons_principaux[gid]
+        )
+
+        if salon_top:
+
+            texte_top = (
+                "🏆 **CLASSEMENT GÉNÉRAL COMPLET** 🏆\n\n"
+            )
+
+            if not classements_par_serveur[gid]:
+
+                texte_top += (
+                    "*Aucun joueur dans le top pour le moment.*"
+                )
+
+            else:
+
+                for index, user_id in enumerate(
+                    classements_par_serveur[gid]
+                ):
+
+                    texte_top += (
+                        f"**Top {index + 1}** : "
+                        f"<@{user_id}>\n"
+                    )
+
+            message_existe = False
+
+            if id_messages_principaux.get(
+                gid
+            ):
+
+                try:
+
+                    msg = await salon_top.fetch_message(
+                        id_messages_principaux[gid]
+                    )
+
+                    await msg.edit(
+                        content=texte_top,
+                        view=VueControleTop()
+                    )
+
+                    message_existe = True
+
+                except Exception:
+                    pass
+
+            if not message_existe:
+
+                try:
+
+                    msg = await salon_top.send(
+                        content=texte_top,
+                        view=VueControleTop()
+                    )
+
+                    id_messages_principaux[gid] = msg.id
+
+                except Exception:
+                    pass
+
+        for numero in sorted(
+            teams.keys(),
+            key=lambda x: int(x)
+        ):
+
+            num = int(numero)
+
+            salon_team = salons_par_team.get(
+                num
+            )
+
+            if salon_team is None:
+                continue
+
+            try:
+
+                lignes = []
+
+                for index, user_id in enumerate(
+                    classements_par_serveur[gid]
+                ):
+
+                    position = index + 1
+
+                    team_joueur = (
+                        obtenir_equipe_et_salon_dynamique(
+                            gid,
+                            position
+                        )
+                    )
+
+                    if team_joueur == num:
+
+                        lignes.append(
+                            f"**Top {position}** : "
+                            f"<@{user_id}>"
+                        )
+
+                titre = obtenir_nom_role_team(
+                    guild,
+                    num
+                ).upper()
+
+                await salon_team.purge(
+                    limit=20
+                )
+
+                if lignes:
+
+                    texte = (
+                        f"🏆 **Membres - {titre}** 🏆\n\n"
+                        + "\n".join(lignes)
+                    )
+
+                else:
+
+                    texte = (
+                        f"Aucun joueur assigné au "
+                        f"{titre} actuellement."
+                    )
+
+                await salon_team.send(
+                    texte
+                )
+
+            except Exception:
+                pass
+
+    finally:
+
+        rafraichissement_en_cours[gid] = False
+
+
+# ============================================================
+# TOURNOI FLASH
+# ============================================================
+
+tournois_par_serveur = {}
+
+
+def generer_affichage_tournoi(
+    gid
+):
+
+    t = tournois_par_serveur.get(
+        gid,
+        {
+            "inscrits": [],
+            "etape": "ferme",
+            "matchs": {},
+            "vainqueurs": {}
+        }
+    )
+
+    texte = (
+        "⚔️ ─── **TOURNOI FLASH AUTOMATIQUE** ─── ⚔️\n\n"
+    )
+
+    if t["etape"] == "inscriptions":
+
+        texte += (
+            f"📌 **Inscriptions ouvertes : "
+            f"{len(t['inscrits'])} / 8**\n\n"
+        )
+
+        for index, user_id in enumerate(
+            t["inscrits"]
+        ):
+
+            texte += (
+                f"{index + 1}. <@{user_id}>\n"
+            )
+
+        return texte
+
+    texte += "◽ **QUARTS DE FINALE** ◽\n"
+
+    for m in range(1, 5):
+
+        joueurs = t["matchs"].get(
+            f"Q{m}",
+            []
+        )
+
+        p1 = (
+            f"<@{joueurs[0]}>"
+            if len(joueurs) > 0
+            else "À définir"
+        )
+
+        p2 = (
+            f"<@{joueurs[1]}>"
+            if len(joueurs) > 1
+            else "À définir"
+        )
+
+        gagnant = t["vainqueurs"].get(
+            f"Q{m}"
+        )
+
+        v = (
+            f"🏅 Vainqueur : <@{gagnant}>"
+            if gagnant
+            else "En attente..."
+        )
+
+        texte += (
+            f"🔹 Match Q{m} : "
+            f"{p1} VS {p2}\n"
+            f"   └─ {v}\n"
+        )
+
+    return texte
+
+
+class VueInscriptionTournoi(
+    discord.ui.View
+):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+        label="S'inscrire ⚔️",
+        style=discord.ButtonStyle.success,
+        custom_id="btn_join_tournoi"
+    )
+    async def bouton_inscription(
+        self,
+        interaction,
+        button
+    ):
+
+        gid = interaction.guild_id
+
+        if gid not in tournois_par_serveur:
+            return
+
+        t = tournois_par_serveur[gid]
+
+        if (
+            t["etape"] != "inscriptions"
+            or interaction.user.id in t["inscrits"]
+        ):
+            return
+
+        t["inscrits"].append(
+            interaction.user.id
+        )
+
+        if len(t["inscrits"]) == 8:
+
+            t["etape"] = "quarts"
+
+            for m in range(1, 5):
+
+                t["matchs"][f"Q{m}"] = [
+                    t["inscrits"][
+                        (m - 1) * 2
+                    ],
+                    t["inscrits"][
+                        (m - 1) * 2 + 1
+                    ]
+                ]
+
+            await interaction.message.edit(
+                content=generer_affichage_tournoi(
+                    gid
+                ),
+                view=None
             )
 
         else:
 
-            lignes.append(
-                f"**{position}.** <@{user_id}>"
+            await interaction.message.edit(
+                content=generer_affichage_tournoi(
+                    gid
+                ),
+                view=self
             )
 
+        await interaction.response.defer()
+
+
+# ============================================================
+# COMMANDES
+# ============================================================
+
+@bot.command(name="setup")
+@commands.has_permissions(administrator=True)
+async def initialiser_salon_top(
+    ctx
+):
+
+    gid = ctx.guild.id
+
+    classements_par_serveur[gid] = []
+
+    id_salons_principaux[gid] = (
+        ctx.channel.id
+    )
+
+    id_messages_principaux[gid] = None
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    await rafraichir_partout(
+        ctx.guild
+    )
+
+
+@bot.command(name="config")
+@commands.has_permissions(administrator=True)
+async def ouvrir_menu_config(
+    ctx
+):
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
     embed = discord.Embed(
-        title="🏆 ROSTER",
-        description="\n".join(lignes),
-        color=discord.Color.blurple()
+        title="🎛️ Panneau de Configuration Personnalisable",
+        description=(
+            "Cliquez sur le menu déroulant ci-dessous "
+            "pour modifier la structure du serveur."
+        ),
+        color=discord.Color.blue()
     )
 
     await ctx.send(
-        embed=embed
+        embed=embed,
+        view=VuePanelConfig(
+            ctx.guild.id
+        ),
+        delete_after=120
+    )
+
+
+@bot.command(name="add")
+@commands.has_permissions(administrator=True)
+async def ajouter_joueur(
+    ctx,
+    membre: discord.Member
+):
+
+    gid = ctx.guild.id
+
+    if gid not in classements_par_serveur:
+
+        classements_par_serveur[gid] = []
+
+    if membre.id not in classements_par_serveur[gid]:
+
+        classements_par_serveur[gid].append(
+            membre.id
+        )
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    await rafraichir_partout(
+        ctx.guild
+    )
+
+
+@bot.command(name="addmany")
+@commands.has_permissions(administrator=True)
+async def ajouter_plusieurs_joueurs(
+    ctx,
+    *membres: discord.Member
+):
+
+    gid = ctx.guild.id
+
+    if gid not in classements_par_serveur:
+
+        classements_par_serveur[gid] = []
+
+    for membre in membres:
+
+        if membre.id not in classements_par_serveur[gid]:
+
+            classements_par_serveur[gid].append(
+                membre.id
+            )
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    await rafraichir_partout(
+        ctx.guild
+    )
+
+
+@bot.command(name="remove")
+@commands.has_permissions(administrator=True)
+async def supprimer_joueur_txt(
+    ctx,
+    membre: discord.Member
+):
+
+    gid = ctx.guild.id
+
+    if (
+        gid in classements_par_serveur
+        and membre.id in classements_par_serveur[gid]
+    ):
+
+        classements_par_serveur[gid].remove(
+            membre.id
+        )
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    await rafraichir_partout(
+        ctx.guild
     )
 
 
 # ============================================================
-# PING
+# TOURNOI
 # ============================================================
 
-@bot.command()
-async def ping(ctx):
+@bot.command(name="tstart")
+@commands.has_permissions(administrator=True)
+async def lancer_inscriptions_tournoi(
+    ctx
+):
+
+    gid = ctx.guild.id
+
+    tournois_par_serveur[gid] = {
+        "inscrits": [],
+        "etape": "inscriptions",
+        "matchs": {},
+        "vainqueurs": {},
+        "msg_id": None
+    }
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    msg = await ctx.send(
+        content=generer_affichage_tournoi(
+            gid
+        ),
+        view=VueInscriptionTournoi()
+    )
+
+    tournois_par_serveur[gid]["msg_id"] = (
+        msg.id
+    )
+
+
+@bot.command(name="twin")
+@commands.has_permissions(administrator=True)
+async def valider_gagnant_match(
+    ctx,
+    code_match: str,
+    membre: discord.Member
+):
+
+    gid = ctx.guild.id
+
+    if gid not in tournois_par_serveur:
+        return
+
+    t = tournois_par_serveur[gid]
+
+    code_match = code_match.upper()
+
+    t["vainqueurs"][code_match] = (
+        membre.id
+    )
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    try:
+
+        msg = await ctx.channel.fetch_message(
+            t["msg_id"]
+        )
+
+        await msg.edit(
+            content=generer_affichage_tournoi(
+                gid
+            )
+        )
+
+    except Exception:
+        pass
+
+
+# ============================================================
+# TICKETS
+# ============================================================
+
+@bot.command(name="setup_ticket")
+@commands.has_permissions(administrator=True)
+async def envoyer_panneau_ticket(
+    ctx
+):
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    embed = discord.Embed(
+        title="🎫 Support & Recrutement - Système de Tickets",
+        description=(
+            "Cliquez ci-dessous pour ouvrir un salon "
+            "d'assistance privé.\n"
+            "Les salons apparaîtront dans la catégorie "
+            "**🎫 𝙏𝙄𝘾𝙆𝙀𝙏**."
+        ),
+        color=discord.Color.green()
+    )
 
     await ctx.send(
-        f"🏓 Pong ! `{round(bot.latency * 1000)}ms`"
+        embed=embed,
+        view=VueCreationTicket()
     )
 
 
@@ -2286,162 +2800,44 @@ async def ping(ctx):
 @bot.event
 async def on_ready():
 
-    global vues_chargees
+    bot.add_view(
+        VueControleTop()
+    )
 
-    print(
-        f"✅ Connecté en tant que {bot.user}"
+    bot.add_view(
+        VueCreationTicket()
+    )
+
+    bot.add_view(
+        VueFermetureTicket()
+    )
+
+    bot.add_view(
+        VueInscriptionTournoi()
     )
 
     print(
-        f"🆔 ID : {bot.user.id}"
-    )
-
-    print(
-        f"🌐 Serveurs : {len(bot.guilds)}"
-    )
-
-    # Charger les données des serveurs
-    for guild in bot.guilds:
-
-        config = obtenir_config_serveur(
-            guild.id
-        )
-
-        classements_par_serveur[
-            guild.id
-        ] = list(
-            config.get(
-                "classement",
-                []
-            )
-        )
-
-    # Les Views dynamiques ne doivent pas être
-    # enregistrées comme persistent views.
-    # Elles sont créées lorsque !config est utilisé.
-
-    if not vues_chargees:
-        vues_chargees = True
-
-    print(
-        "✅ Configuration chargée."
+        f"Bot en ligne : {bot.user.name}"
     )
 
 
 # ============================================================
-# ERREURS COMMANDES
+# LANCEMENT
 # ============================================================
 
-@bot.event
-async def on_command_error(
-    ctx,
-    error
-):
+keep_alive()
 
-    if isinstance(
-        error,
-        commands.CommandNotFound
-    ):
-        return
+TOKEN = os.environ.get(
+    "DISCORD_TOKEN"
+)
 
-    if isinstance(
-        error,
-        commands.MissingPermissions
-    ):
-
-        await ctx.send(
-            "❌ Tu n'as pas la permission d'utiliser cette commande.",
-            delete_after=6
-        )
-
-        return
-
-    if isinstance(
-        error,
-        commands.MissingRequiredArgument
-    ):
-
-        await ctx.send(
-            "❌ Il manque un argument à la commande.",
-            delete_after=6
-        )
-
-        return
-
-    if isinstance(
-        error,
-        commands.MemberNotFound
-    ):
-
-        await ctx.send(
-            "❌ Je ne trouve pas ce membre.",
-            delete_after=6
-        )
-
-        return
+if not TOKEN:
 
     print(
-        f"\n❌ ERREUR COMMANDE : {ctx.command}"
+        "❌ ERREUR : DISCORD_TOKEN est introuvable."
     )
 
-    traceback.print_exception(
-        type(error),
-        error,
-        error.__traceback__
-    )
-
-    try:
-
-        await ctx.send(
-            f"❌ Une erreur est survenue : `{error}`",
-            delete_after=10
-        )
-
-    except Exception:
-        pass
-
-
-# ============================================================
-# ERREURS GLOBALES
-# ============================================================
-
-@bot.event
-async def on_error(
-    event,
-    *args,
-    **kwargs
-):
-
-    print(
-        f"\n❌ ERREUR EVENT : {event}"
-    )
-
-    traceback.print_exc()
-
-
-# ============================================================
-# LANCEMENT DU BOT
-# ============================================================
-
-if __name__ == "__main__":
-
-    charger_configs()
-
-    keep_alive()
-
-    TOKEN = os.environ.get(
-        "DISCORD_TOKEN"
-    )
-
-    if not TOKEN:
-
-        raise RuntimeError(
-            "❌ La variable DISCORD_TOKEN n'est pas configurée."
-        )
-
-    print(
-        "🚀 Démarrage du bot..."
-    )
+else:
 
     bot.run(
         TOKEN
